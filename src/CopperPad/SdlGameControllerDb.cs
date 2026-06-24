@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Ilkka Lehtoranta
+ * SPDX-License-Identifier: MIT
+ */
+
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.InteropServices;
@@ -182,29 +187,29 @@ internal sealed record SdlControllerMapping(
 	string? Platform,
 	IReadOnlyList<SdlControllerBinding> Bindings)
 {
-	private static readonly Dictionary<string, VirtualXboxControl> Targets = new(StringComparer.OrdinalIgnoreCase)
+	private static readonly Dictionary<string, ControllerElement> Targets = new(StringComparer.OrdinalIgnoreCase)
 	{
-		["a"] = VirtualXboxControl.A,
-		["b"] = VirtualXboxControl.B,
-		["x"] = VirtualXboxControl.X,
-		["y"] = VirtualXboxControl.Y,
-		["back"] = VirtualXboxControl.Back,
-		["start"] = VirtualXboxControl.Start,
-		["guide"] = VirtualXboxControl.Guide,
-		["leftshoulder"] = VirtualXboxControl.LeftShoulder,
-		["rightshoulder"] = VirtualXboxControl.RightShoulder,
-		["leftstick"] = VirtualXboxControl.LeftStick,
-		["rightstick"] = VirtualXboxControl.RightStick,
-		["dpup"] = VirtualXboxControl.DPadUp,
-		["dpdown"] = VirtualXboxControl.DPadDown,
-		["dpleft"] = VirtualXboxControl.DPadLeft,
-		["dpright"] = VirtualXboxControl.DPadRight,
-		["leftx"] = VirtualXboxControl.LeftX,
-		["lefty"] = VirtualXboxControl.LeftY,
-		["rightx"] = VirtualXboxControl.RightX,
-		["righty"] = VirtualXboxControl.RightY,
-		["lefttrigger"] = VirtualXboxControl.LeftTrigger,
-		["righttrigger"] = VirtualXboxControl.RightTrigger
+		["a"] = ControllerElement.A,
+		["b"] = ControllerElement.B,
+		["x"] = ControllerElement.X,
+		["y"] = ControllerElement.Y,
+		["back"] = ControllerElement.Select,
+		["start"] = ControllerElement.Start,
+		["guide"] = ControllerElement.Menu,
+		["leftshoulder"] = ControllerElement.LeftShoulder,
+		["rightshoulder"] = ControllerElement.RightShoulder,
+		["leftstick"] = ControllerElement.LeftStickButton,
+		["rightstick"] = ControllerElement.RightStickButton,
+		["dpup"] = ControllerElement.DPadUp,
+		["dpdown"] = ControllerElement.DPadDown,
+		["dpleft"] = ControllerElement.DPadLeft,
+		["dpright"] = ControllerElement.DPadRight,
+		["leftx"] = ControllerElement.LeftStickX,
+		["lefty"] = ControllerElement.LeftStickY,
+		["rightx"] = ControllerElement.RightStickX,
+		["righty"] = ControllerElement.RightStickY,
+		["lefttrigger"] = ControllerElement.LeftTrigger,
+		["righttrigger"] = ControllerElement.RightTrigger
 	};
 
 	public ControllerMappingInfo MappingInfo { get; } = new("SDL DB", Name);
@@ -327,7 +332,7 @@ internal sealed record SdlControllerMapping(
 		var value = binding.Source.Kind == SdlInputSourceKind.Hat
 			? ReadHatAxis(binding, snapshot)
 			: ReadAxisSource(binding.Source, snapshot);
-		if (binding.Target is VirtualXboxControl.LeftY or VirtualXboxControl.RightY)
+		if (binding.Target is ControllerElement.LeftStickY or ControllerElement.RightStickY)
 		{
 			value = -value;
 		}
@@ -399,26 +404,26 @@ internal sealed record SdlControllerMapping(
 		return InputNormalization.NormalizeTrigger(axis.Value.Raw, axis.Value.Minimum, axis.Value.Maximum);
 	}
 
-	private static bool IsAxis(VirtualXboxControl control)
-		=> control is VirtualXboxControl.LeftX or VirtualXboxControl.LeftY or VirtualXboxControl.RightX or VirtualXboxControl.RightY;
+	private static bool IsAxis(ControllerElement control)
+		=> control is ControllerElement.LeftStickX or ControllerElement.LeftStickY or ControllerElement.RightStickX or ControllerElement.RightStickY;
 
-	private static bool IsTrigger(VirtualXboxControl control)
-		=> control is VirtualXboxControl.LeftTrigger or VirtualXboxControl.RightTrigger;
+	private static bool IsTrigger(ControllerElement control)
+		=> control is ControllerElement.LeftTrigger or ControllerElement.RightTrigger;
 
-	private static void SetAxis(VirtualXboxStateBuilder builder, VirtualXboxControl control, double value)
+	private static void SetAxis(VirtualXboxStateBuilder builder, ControllerElement control, double value)
 	{
 		switch (control)
 		{
-			case VirtualXboxControl.LeftX: builder.LeftX = value; break;
-			case VirtualXboxControl.LeftY: builder.LeftY = value; break;
-			case VirtualXboxControl.RightX: builder.RightX = value; break;
-			case VirtualXboxControl.RightY: builder.RightY = value; break;
+			case ControllerElement.LeftStickX: builder.LeftX = value; break;
+			case ControllerElement.LeftStickY: builder.LeftY = value; break;
+			case ControllerElement.RightStickX: builder.RightX = value; break;
+			case ControllerElement.RightStickY: builder.RightY = value; break;
 		}
 	}
 
-	private static void SetTrigger(VirtualXboxStateBuilder builder, VirtualXboxControl control, double value)
+	private static void SetTrigger(VirtualXboxStateBuilder builder, ControllerElement control, double value)
 	{
-		if (control == VirtualXboxControl.LeftTrigger)
+		if (control == ControllerElement.LeftTrigger)
 		{
 			builder.LeftTrigger = value;
 		}
@@ -428,30 +433,30 @@ internal sealed record SdlControllerMapping(
 		}
 	}
 
-	private static void SetButton(VirtualXboxStateBuilder builder, VirtualXboxControl control, bool pressed)
+	private static void SetButton(VirtualXboxStateBuilder builder, ControllerElement control, bool pressed)
 	{
 		switch (control)
 		{
-			case VirtualXboxControl.A: builder.A = pressed; break;
-			case VirtualXboxControl.B: builder.B = pressed; break;
-			case VirtualXboxControl.X: builder.X = pressed; break;
-			case VirtualXboxControl.Y: builder.Y = pressed; break;
-			case VirtualXboxControl.LeftShoulder: builder.LeftShoulder = pressed; break;
-			case VirtualXboxControl.RightShoulder: builder.RightShoulder = pressed; break;
-			case VirtualXboxControl.Back: builder.Back = pressed; break;
-			case VirtualXboxControl.Start: builder.Start = pressed; break;
-			case VirtualXboxControl.Guide: builder.Guide = pressed; break;
-			case VirtualXboxControl.LeftStick: builder.LeftStick = pressed; break;
-			case VirtualXboxControl.RightStick: builder.RightStick = pressed; break;
-			case VirtualXboxControl.DPadUp: builder.DPadUp = pressed; break;
-			case VirtualXboxControl.DPadDown: builder.DPadDown = pressed; break;
-			case VirtualXboxControl.DPadLeft: builder.DPadLeft = pressed; break;
-			case VirtualXboxControl.DPadRight: builder.DPadRight = pressed; break;
+			case ControllerElement.A: builder.A = pressed; break;
+			case ControllerElement.B: builder.B = pressed; break;
+			case ControllerElement.X: builder.X = pressed; break;
+			case ControllerElement.Y: builder.Y = pressed; break;
+			case ControllerElement.LeftShoulder: builder.LeftShoulder = pressed; break;
+			case ControllerElement.RightShoulder: builder.RightShoulder = pressed; break;
+			case ControllerElement.Select: builder.Back = pressed; break;
+			case ControllerElement.Start: builder.Start = pressed; break;
+			case ControllerElement.Menu: builder.Guide = pressed; break;
+			case ControllerElement.LeftStickButton: builder.LeftStick = pressed; break;
+			case ControllerElement.RightStickButton: builder.RightStick = pressed; break;
+			case ControllerElement.DPadUp: builder.DPadUp = pressed; break;
+			case ControllerElement.DPadDown: builder.DPadDown = pressed; break;
+			case ControllerElement.DPadLeft: builder.DPadLeft = pressed; break;
+			case ControllerElement.DPadRight: builder.DPadRight = pressed; break;
 		}
 	}
 }
 
-internal sealed record SdlControllerBinding(VirtualXboxControl Target, SdlPolarity TargetPolarity, SdlInputSource Source);
+internal sealed record SdlControllerBinding(ControllerElement Target, SdlPolarity TargetPolarity, SdlInputSource Source);
 
 internal sealed record SdlInputSource(SdlInputSourceKind Kind, int Index, SdlPolarity Polarity, bool Invert, int HatMask)
 {

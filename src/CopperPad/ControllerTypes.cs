@@ -1,11 +1,9 @@
-namespace CopperPad;
+/*
+ * Copyright (C) 2026 Ilkka Lehtoranta
+ * SPDX-License-Identifier: MIT
+ */
 
-public enum ControllerTransport
-{
-	Unknown = 0,
-	Usb,
-	Bluetooth
-}
+namespace CopperPad;
 
 public sealed record ControllerInfo(
 	string Id,
@@ -89,29 +87,4 @@ public sealed record ControllerHostOptions
 {
 	public ControllerProfileSet Profiles { get; init; } = ControllerProfileSet.Empty;
 	public TimeSpan ReadTimeout { get; init; } = TimeSpan.FromMilliseconds(250);
-}
-
-public enum VirtualXboxControl
-{
-	A,
-	B,
-	X,
-	Y,
-	LeftShoulder,
-	RightShoulder,
-	Back,
-	Start,
-	Guide,
-	LeftStick,
-	RightStick,
-	DPadUp,
-	DPadDown,
-	DPadLeft,
-	DPadRight,
-	LeftX,
-	LeftY,
-	RightX,
-	RightY,
-	LeftTrigger,
-	RightTrigger
 }

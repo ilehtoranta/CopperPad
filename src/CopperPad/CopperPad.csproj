@@ -31,15 +31,19 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="HidSharp" Version="2.6.4" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="README.md" Pack="true" PackagePath="\" />
-    <None Include="THIRD-PARTY-NOTICES.md" Pack="true" PackagePath="\" />
-    <None Include="ThirdParty\SDL_GameControllerDB\LICENSE" Pack="true" PackagePath="third-party\SDL_GameControllerDB\" />
-    <None Include="ThirdParty\SDL_GameControllerDB\gamecontrollerdb.txt" Pack="true" PackagePath="third-party\SDL_GameControllerDB\" />
-    <EmbeddedResource Include="ThirdParty\SDL_GameControllerDB\gamecontrollerdb.txt" LogicalName="CopperPad.ThirdParty.SDL_GameControllerDB.gamecontrollerdb.txt" />
+    <Compile Remove="ControllerDiagnostics.cs" />
+    <Compile Remove="ControllerHost.cs" />
+    <Compile Remove="ControllerMappers.cs" />
+    <Compile Remove="ControllerTypes.cs" />
+    <Compile Remove="HidAbstractions.cs" />
+    <Compile Remove="HidSharpDeviceProvider.cs" />
+    <Compile Remove="InputNormalization.cs" />
+    <Compile Remove="KnownControllerMappers.cs" />
+    <Compile Remove="SdlGameControllerDb.cs" />
   </ItemGroup>
 
 </Project>

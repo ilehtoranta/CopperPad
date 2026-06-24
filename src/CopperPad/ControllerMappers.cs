@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Ilkka Lehtoranta
+ * SPDX-License-Identifier: MIT
+ */
+
 namespace CopperPad;
 
 internal interface IControllerMapper
@@ -55,8 +60,18 @@ internal static class ControllerMapperFactory
 			device.ProductName.Contains("joystick", StringComparison.OrdinalIgnoreCase);
 	}
 
-	private static ControllerInfo ToInfo(HidDeviceDescriptor device, bool connected, string? diagnostic)
-		=> new(device.Id, device.ProductName, device.VendorId, device.ProductId, device.Transport, connected, diagnostic);
+	private static CopperControllerInfo ToInfo(HidDeviceDescriptor device, bool connected, string? diagnostic)
+		=> new(
+			device.Id,
+			device.ProductName,
+			device.VendorId,
+			device.ProductId,
+			device.Transport,
+			connected,
+			new HashSet<ControllerProfileKind> { ControllerProfileKind.RawInput },
+			ControllerMappingSource.None,
+			null,
+			diagnostic);
 }
 
 internal sealed class DiagnosticControllerMapper(string diagnostic) : IControllerMapper
@@ -146,14 +161,14 @@ internal sealed class ProfileControllerMapper(ControllerProfile profile) : ICont
 
 		switch (binding.Target)
 		{
-			case VirtualXboxControl.LeftX:
-			case VirtualXboxControl.LeftY:
-			case VirtualXboxControl.RightX:
-			case VirtualXboxControl.RightY:
+			case ControllerElement.LeftStickX:
+			case ControllerElement.LeftStickY:
+			case ControllerElement.RightStickX:
+			case ControllerElement.RightStickY:
 				SetAxis(builder, binding.Target, ReadAxisSource(source, report, length), binding.Axis);
 				break;
-			case VirtualXboxControl.LeftTrigger:
-			case VirtualXboxControl.RightTrigger:
+			case ControllerElement.LeftTrigger:
+			case ControllerElement.RightTrigger:
 				SetTrigger(builder, binding.Target, ReadAxisSource(source, report, length), binding.Axis);
 				break;
 			default:
@@ -192,7 +207,7 @@ internal sealed class ProfileControllerMapper(ControllerProfile profile) : ICont
 			(!expectedDirections.Right || actualDirections.Right);
 	}
 
-	private static void SetAxis(VirtualXboxStateBuilder builder, VirtualXboxControl control, int raw, AxisCalibration? calibration)
+	private static void SetAxis(VirtualXboxStateBuilder builder, ControllerElement control, int raw, AxisCalibration? calibration)
 	{
 		calibration ??= new AxisCalibration();
 		var value = InputNormalization.NormalizeAxis(
@@ -205,18 +220,18 @@ internal sealed class ProfileControllerMapper(ControllerProfile profile) : ICont
 			calibration.Saturation);
 		switch (control)
 		{
-			case VirtualXboxControl.LeftX: builder.LeftX = value; break;
-			case VirtualXboxControl.LeftY: builder.LeftY = value; break;
-			case VirtualXboxControl.RightX: builder.RightX = value; break;
-			case VirtualXboxControl.RightY: builder.RightY = value; break;
+			case ControllerElement.LeftStickX: builder.LeftX = value; break;
+			case ControllerElement.LeftStickY: builder.LeftY = value; break;
+			case ControllerElement.RightStickX: builder.RightX = value; break;
+			case ControllerElement.RightStickY: builder.RightY = value; break;
 		}
 	}
 
-	private static void SetTrigger(VirtualXboxStateBuilder builder, VirtualXboxControl control, int raw, AxisCalibration? calibration)
+	private static void SetTrigger(VirtualXboxStateBuilder builder, ControllerElement control, int raw, AxisCalibration? calibration)
 	{
 		calibration ??= new AxisCalibration();
 		var value = InputNormalization.NormalizeTrigger(raw, calibration.Minimum, calibration.Maximum, calibration.Deadzone, calibration.Saturation);
-		if (control == VirtualXboxControl.LeftTrigger)
+		if (control == ControllerElement.LeftTrigger)
 		{
 			builder.LeftTrigger = value;
 		}
@@ -226,25 +241,25 @@ internal sealed class ProfileControllerMapper(ControllerProfile profile) : ICont
 		}
 	}
 
-	private static void SetButton(VirtualXboxStateBuilder builder, VirtualXboxControl control, bool pressed)
+	private static void SetButton(VirtualXboxStateBuilder builder, ControllerElement control, bool pressed)
 	{
 		switch (control)
 		{
-			case VirtualXboxControl.A: builder.A = pressed; break;
-			case VirtualXboxControl.B: builder.B = pressed; break;
-			case VirtualXboxControl.X: builder.X = pressed; break;
-			case VirtualXboxControl.Y: builder.Y = pressed; break;
-			case VirtualXboxControl.LeftShoulder: builder.LeftShoulder = pressed; break;
-			case VirtualXboxControl.RightShoulder: builder.RightShoulder = pressed; break;
-			case VirtualXboxControl.Back: builder.Back = pressed; break;
-			case VirtualXboxControl.Start: builder.Start = pressed; break;
-			case VirtualXboxControl.Guide: builder.Guide = pressed; break;
-			case VirtualXboxControl.LeftStick: builder.LeftStick = pressed; break;
-			case VirtualXboxControl.RightStick: builder.RightStick = pressed; break;
-			case VirtualXboxControl.DPadUp: builder.DPadUp = pressed; break;
-			case VirtualXboxControl.DPadDown: builder.DPadDown = pressed; break;
-			case VirtualXboxControl.DPadLeft: builder.DPadLeft = pressed; break;
-			case VirtualXboxControl.DPadRight: builder.DPadRight = pressed; break;
+			case ControllerElement.A: builder.A = pressed; break;
+			case ControllerElement.B: builder.B = pressed; break;
+			case ControllerElement.X: builder.X = pressed; break;
+			case ControllerElement.Y: builder.Y = pressed; break;
+			case ControllerElement.LeftShoulder: builder.LeftShoulder = pressed; break;
+			case ControllerElement.RightShoulder: builder.RightShoulder = pressed; break;
+			case ControllerElement.Select: builder.Back = pressed; break;
+			case ControllerElement.Start: builder.Start = pressed; break;
+			case ControllerElement.Menu: builder.Guide = pressed; break;
+			case ControllerElement.LeftStickButton: builder.LeftStick = pressed; break;
+			case ControllerElement.RightStickButton: builder.RightStick = pressed; break;
+			case ControllerElement.DPadUp: builder.DPadUp = pressed; break;
+			case ControllerElement.DPadDown: builder.DPadDown = pressed; break;
+			case ControllerElement.DPadLeft: builder.DPadLeft = pressed; break;
+			case ControllerElement.DPadRight: builder.DPadRight = pressed; break;
 		}
 	}
 }

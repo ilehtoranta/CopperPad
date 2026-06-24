@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Ilkka Lehtoranta
+ * SPDX-License-Identifier: MIT
+ */
+
 using System.Collections.Concurrent;
 
 namespace CopperPad;
@@ -143,10 +148,7 @@ public sealed class ControllerHost : IDisposable
 
 	private void ThrowIfDisposed()
 	{
-		if (_disposed)
-		{
-			throw new ObjectDisposedException(nameof(ControllerHost));
-		}
+		ObjectDisposedException.ThrowIf(_disposed, nameof(ControllerHost));
 	}
 
 	private sealed class ControllerSession : IDisposable
@@ -183,8 +185,7 @@ public sealed class ControllerHost : IDisposable
 
 		public ControllerInfo Info { get; private set; }
 
-		public void Start()
-			=> _task = Task.Run(ReadLoopAsync);
+		public void Start() => _task = Task.Run(ReadLoopAsync);
 
 		public void Dispose()
 		{

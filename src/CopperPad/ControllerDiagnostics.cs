@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Ilkka Lehtoranta
+ * SPDX-License-Identifier: MIT
+ */
+
 namespace CopperPad;
 
 public sealed record HidDeviceInfo(
@@ -36,8 +41,8 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 	private readonly IHidDeviceProvider _provider;
 	private readonly TimeSpan _readTimeout;
 	private readonly object _gate = new();
-	private IReadOnlyList<HidDeviceDescriptor> _descriptors = Array.Empty<HidDeviceDescriptor>();
-	private IReadOnlyList<HidDeviceInfo> _devices = Array.Empty<HidDeviceInfo>();
+	private IReadOnlyList<HidDeviceDescriptor> _descriptors = [];
+	private IReadOnlyList<HidDeviceInfo> _devices = [];
 	private ControllerProfileSet _profiles;
 	private string? _diagnostic;
 	private string? _selectedDeviceId;
@@ -46,8 +51,7 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 	private bool _started;
 	private bool _disposed;
 
-	public ControllerDiagnosticsHost(ControllerHostOptions? options = null)
-		: this(new HidSharpDeviceProvider(), options ?? new ControllerHostOptions())
+	public ControllerDiagnosticsHost(ControllerHostOptions? options = null) : this(new HidSharpDeviceProvider(), options ?? new ControllerHostOptions())
 	{
 	}
 
@@ -100,8 +104,8 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 
 			_started = false;
 			StopReaderLocked();
-			_descriptors = Array.Empty<HidDeviceDescriptor>();
-			_devices = Array.Empty<HidDeviceInfo>();
+			_descriptors = [];
+			_devices = [];
 			RaiseDevicesChangedLocked();
 		}
 	}
@@ -192,8 +196,8 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 		catch (Exception ex) when (IsRecoverableHidException(ex))
 		{
 			StopReaderLocked();
-			_descriptors = Array.Empty<HidDeviceDescriptor>();
-			_devices = Array.Empty<HidDeviceInfo>();
+			_descriptors = [];
+			_devices = [];
 			_selectedDeviceId = null;
 			_diagnostic = "HID scan failed: " + ex.Message;
 			RaiseDevicesChangedLocked();
@@ -309,10 +313,7 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 
 	private void ThrowIfDisposed()
 	{
-		if (_disposed)
-		{
-			throw new ObjectDisposedException(nameof(ControllerDiagnosticsHost));
-		}
+		ObjectDisposedException.ThrowIf(_disposed, nameof(ControllerDiagnosticsHost));
 	}
 
 	internal static HidDeviceInfo ToInfo(HidDeviceDescriptor descriptor)

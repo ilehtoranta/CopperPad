@@ -1,3 +1,8 @@
+/*
+ * Copyright (C) 2026 Ilkka Lehtoranta
+ * SPDX-License-Identifier: MIT
+ */
+
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
@@ -8,10 +13,10 @@ public sealed record ControllerProfileSet
 {
 	public static ControllerProfileSet Empty { get; } = new();
 
-	public int SchemaVersion { get; init; } = 1;
+	public int SchemaVersion { get; init; } = 2;
 	public IReadOnlyList<ControllerProfile> Profiles { get; init; } = Array.Empty<ControllerProfile>();
 
-	public ControllerProfile? FindMatch(ControllerInfo info)
+	public ControllerProfile? FindMatch(CopperControllerInfo info)
 	{
 		foreach (var profile in Profiles)
 		{
@@ -37,7 +42,7 @@ public sealed record ControllerProfile
 	public DateTimeOffset? UpdatedAt { get; init; }
 	public IReadOnlyList<ControllerBinding> Bindings { get; init; } = Array.Empty<ControllerBinding>();
 
-	public bool Matches(ControllerInfo info)
+	public bool Matches(CopperControllerInfo info)
 	{
 		if (VendorId.HasValue && VendorId.Value != info.VendorId)
 		{
@@ -55,13 +60,13 @@ public sealed record ControllerProfile
 		}
 
 		return string.IsNullOrWhiteSpace(ProductNameContains) ||
-			info.ProductName.Contains(ProductNameContains, StringComparison.OrdinalIgnoreCase);
+			info.DisplayName.Contains(ProductNameContains, StringComparison.OrdinalIgnoreCase);
 	}
 }
 
 public sealed record ControllerBinding
 {
-	public VirtualXboxControl Target { get; init; }
+	public ControllerElement Target { get; init; }
 	public ControllerBindingSource Source { get; init; } = new();
 	public AxisCalibration? Axis { get; init; }
 }
@@ -109,15 +114,18 @@ public static class JsonControllerProfileSerializer
 	};
 
 	public static string Serialize(ControllerProfileSet profiles)
-		=> JsonSerializer.Serialize(profiles, Options);
+		=> JsonSerializer.Serialize(Upgrade(profiles), Options);
 
 	public static ControllerProfileSet Deserialize(string json)
-		=> JsonSerializer.Deserialize<ControllerProfileSet>(json, Options) ?? ControllerProfileSet.Empty;
+		=> Upgrade(JsonSerializer.Deserialize<ControllerProfileSet>(json, Options) ?? ControllerProfileSet.Empty);
 
 	public static async ValueTask<ControllerProfileSet> LoadAsync(Stream stream, CancellationToken cancellationToken = default)
-		=> await JsonSerializer.DeserializeAsync<ControllerProfileSet>(stream, Options, cancellationToken).ConfigureAwait(false) ??
-			ControllerProfileSet.Empty;
+		=> Upgrade(await JsonSerializer.DeserializeAsync<ControllerProfileSet>(stream, Options, cancellationToken).ConfigureAwait(false) ??
+			ControllerProfileSet.Empty);
 
 	public static async ValueTask SaveAsync(Stream stream, ControllerProfileSet profiles, CancellationToken cancellationToken = default)
-		=> await JsonSerializer.SerializeAsync(stream, profiles, Options, cancellationToken).ConfigureAwait(false);
+		=> await JsonSerializer.SerializeAsync(stream, Upgrade(profiles), Options, cancellationToken).ConfigureAwait(false);
+
+	private static ControllerProfileSet Upgrade(ControllerProfileSet profiles)
+		=> profiles.SchemaVersion >= 2 ? profiles : profiles with { SchemaVersion = 2 };
 }
