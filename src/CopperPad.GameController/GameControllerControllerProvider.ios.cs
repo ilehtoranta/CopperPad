@@ -106,7 +106,9 @@ public sealed class GameControllerControllerProvider : IControllerProvider
 
 	private void SynchronizeControllers()
 	{
-		var current = GCController.Controllers.ToHashSet(ReferenceEqualityComparer.Instance);
+		var current = GCController.Controllers
+			.OfType<GCController>()
+			.ToHashSet(ReferenceEqualityComparer.Instance);
 		var disconnected = new List<(ControllerSession Session, CopperControllerSnapshot Snapshot)>();
 		var connected = new List<ControllerSession>();
 		CopperControllerInfo[] infos;
@@ -174,6 +176,9 @@ public sealed class GameControllerControllerProvider : IControllerProvider
 		SnapshotChanged?.Invoke(this, new CopperControllerSnapshotChangedEventArgs(snapshot));
 	}
 
+	// GCGamepad remains supported for older standard-profile controllers even though
+	// Apple now recommends GCExtendedGamepad for newly manufactured controllers.
+#pragma warning disable CA1422
 	private sealed class ControllerSession(GCController controller, Action<ControllerSession> publish)
 	{
 		public GCController Controller { get; } = controller;
@@ -261,15 +266,16 @@ public sealed class GameControllerControllerProvider : IControllerProvider
 				{
 					South = micro.ButtonA.IsPressed,
 					West = micro.ButtonX.IsPressed,
-					DPadUp = micro.DPad.Up.IsPressed,
-					DPadDown = micro.DPad.Down.IsPressed,
-					DPadLeft = micro.DPad.Left.IsPressed,
-					DPadRight = micro.DPad.Right.IsPressed
+					DPadUp = micro.Dpad.Up.IsPressed,
+					DPadDown = micro.Dpad.Down.IsPressed,
+					DPadLeft = micro.Dpad.Left.IsPressed,
+					DPadRight = micro.Dpad.Right.IsPressed
 				};
 			}
 
 			return new GameControllerState();
 		}
 	}
+#pragma warning restore CA1422
 }
 #endif
