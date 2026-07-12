@@ -108,7 +108,7 @@ public sealed class GameControllerControllerProvider : IControllerProvider
 	{
 		var current = GCController.Controllers
 			.OfType<GCController>()
-			.ToHashSet(ReferenceEqualityComparer.Instance);
+			.ToHashSet<GCController>(ReferenceEqualityComparer.Instance);
 		var disconnected = new List<(ControllerSession Session, CopperControllerSnapshot Snapshot)>();
 		var connected = new List<ControllerSession>();
 		CopperControllerInfo[] infos;
