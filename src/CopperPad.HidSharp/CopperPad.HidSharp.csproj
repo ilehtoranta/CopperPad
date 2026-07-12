@@ -10,13 +10,8 @@
     <Authors>Ilkka Lehtoranta</Authors>
     <Description>Desktop HidSharp controller provider for CopperPad, including SDL_GameControllerDB mappings.</Description>
     <PackageVersion>2.0.0</PackageVersion>
-    <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://github.com/ilehtoranta/CopperMod</PackageProjectUrl>
-    <RepositoryUrl>https://github.com/ilehtoranta/CopperMod.git</RepositoryUrl>
-    <RepositoryType>git</RepositoryType>
     <PackageTags>gamepad;controller;hid;hidsharp;sdl;input</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <IsPackable>true</IsPackable>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>

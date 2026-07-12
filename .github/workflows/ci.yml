@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  build-test:
+    name: Build and test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.300
+
+      - name: Restore
+        run: dotnet restore CopperPad.slnx
+
+      - name: Build
+        run: dotnet build CopperPad.slnx --configuration Release --no-restore -warnaserror
+
+      - name: Test
+        run: dotnet test CopperPad.slnx --configuration Release --no-build --no-restore
+
+  pack:
+    name: Pack NuGet packages
+    needs: build-test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.300
+
+      - name: Restore package projects
+        run: |
+          dotnet restore src/CopperPad/CopperPad.csproj
+          dotnet restore src/CopperPad.HidSharp/CopperPad.HidSharp.csproj
+          dotnet restore src/CopperPad.GameController/CopperPad.GameController.csproj
+
+      - name: Pack public libraries
+        run: |
+          dotnet pack src/CopperPad/CopperPad.csproj --configuration Release --no-restore -warnaserror --output artifacts/packages
+          dotnet pack src/CopperPad.HidSharp/CopperPad.HidSharp.csproj --configuration Release --no-restore -warnaserror --output artifacts/packages
+          dotnet pack src/CopperPad.GameController/CopperPad.GameController.csproj --configuration Release --no-restore -warnaserror --output artifacts/packages
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: CopperPad-NuGet-packages
+          path: |
+            artifacts/packages/*.nupkg
+            artifacts/packages/*.snupkg
+          if-no-files-found: error
+

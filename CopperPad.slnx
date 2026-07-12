@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CopperPad.GameController/CopperPad.GameController.csproj" />
+    <Project Path="src/CopperPad.Gui/CopperPad.Gui.csproj" />
+    <Project Path="src/CopperPad.HidSharp/CopperPad.HidSharp.csproj" />
+    <Project Path="src/CopperPad/CopperPad.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CopperPad.Gui.Tests/CopperPad.Gui.Tests.csproj" />
+    <Project Path="tests/CopperPad.Tests/CopperPad.Tests.csproj" />
+  </Folder>
+</Solution>

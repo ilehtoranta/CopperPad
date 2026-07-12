@@ -1,52 +1,59 @@
 # CopperPad Release Checklist
 
-## Required Checks
+## Automated checks
 
-- Run core tests:
+- Confirm the `CI` workflow passes on Windows and Linux.
+- Confirm the `iOS` workflow builds `net10.0-ios`, packs the iOS-enabled package, and uploads its artifact.
+- Build and test locally when practical:
 
-```powershell
-dotnet test CopperPad\tests\CopperPad.Tests\CopperPad.Tests.csproj -c Release
-dotnet test CopperPad\tests\CopperPad.Gui.Tests\CopperPad.Gui.Tests.csproj -c Release
+```sh
+dotnet restore CopperPad.slnx
+dotnet build CopperPad.slnx --configuration Release --no-restore -warnaserror
+dotnet test CopperPad.slnx --configuration Release --no-build --no-restore
 ```
 
-- Pack public libraries:
+## Package checks
 
-```powershell
-dotnet pack CopperPad\src\CopperPad\CopperPad.csproj -c Release -o CopperPad\artifacts\packages
-dotnet pack CopperPad\src\CopperPad.HidSharp\CopperPad.HidSharp.csproj -c Release -o CopperPad\artifacts\packages
-dotnet pack CopperPad\src\CopperPad.GameController\CopperPad.GameController.csproj -c Release -o CopperPad\artifacts\packages
+Pack the platform-neutral libraries:
+
+```sh
+dotnet pack src/CopperPad/CopperPad.csproj --configuration Release --output artifacts/packages
+dotnet pack src/CopperPad.HidSharp/CopperPad.HidSharp.csproj --configuration Release --output artifacts/packages
+dotnet pack src/CopperPad.GameController/CopperPad.GameController.csproj --configuration Release --output artifacts/packages
 ```
 
-- Confirm every `.nupkg` contains `README.md` and `LICENSE`. `CopperPad.HidSharp` must also contain `THIRD-PARTY-NOTICES.md`, SDL_GameControllerDB `LICENSE`, and `gamecontrollerdb.txt`.
+- Confirm package IDs and versions are correct and all packages reference `https://github.com/ilehtoranta/CopperPad`.
+- Confirm every `.nupkg` contains `README.md` and `LICENSE`.
+- Confirm `CopperPad.HidSharp` also contains `THIRD-PARTY-NOTICES.md`, the SDL_GameControllerDB license, and `gamecontrollerdb.txt`.
+- Obtain the iOS-enabled `CopperPad.GameController` package from the successful `iOS` workflow rather than publishing a Windows-produced package.
 
-- Publish and smoke-test the end-user GUI:
+## GUI checks
 
-```powershell
-CopperPad\scripts\SmokeTest-Gui.ps1 -Configuration Release -Runtime win-x64
-```
-
-- Confirm the GUI zip contains `CopperPad.Gui.exe`, `README.md`, `LICENSE`, `THIRD-PARTY-NOTICES.md`, and the SDL_GameControllerDB license/data files.
-
-- Build CopperScreen against the release candidate:
+Publish and smoke-test the end-user GUI:
 
 ```powershell
-dotnet build CopperScreen\CopperScreen.csproj -c Release
+./scripts/SmokeTest-Gui.ps1 -Configuration Release -Runtime win-x64
 ```
 
-## Manual GUI Smoke Tests
+- Start with no controller attached; the application must remain open and show a clear empty state.
+- Attach a known controller; it must appear without enabling **Show all HID**.
+- Exercise controller summary, test, profile creation/editing, save, reload, import, and export.
+- Disconnect and reconnect while the GUI is open; the application must show status instead of exiting.
+- Confirm the GUI archive contains the executable, README, MIT license, third-party notices, and SDL data/license files.
 
-- Start CopperPad.Gui with no controller attached; it must remain open and show an empty/clear device state.
-- Attach one known controller; it must appear without enabling "Show all HID".
-- Enable "Show all HID"; non-game HID devices may appear only in this mode.
-- Open the selected controller summary, then test, create/edit profile, save, reload, import, and export.
-- Disconnect and reconnect the controller while the GUI is open; the app must show status instead of exiting.
-- Check `%APPDATA%\CopperMod\CopperPad\CopperPad.Gui.crash.log` after failures.
+## Apple hardware gate
 
-## Release Notes
+On physical iOS hardware, verify:
 
-- Mention that `CopperPad.Gui` is a shipped end-user controller tester, mapper, and calibrator.
-- Mention the breaking profile-first API.
-- Mention that SDL_GameControllerDB data is bundled with `CopperPad.HidSharp` under the zlib license.
-- If publishing `CopperPad.GameController`, pack the real `net10.0-ios` target on macOS with the iOS workload.
-- On iOS hardware, verify live extended/standard snapshots, two same-vendor controllers with distinct IDs, independent disconnect/reconnect, and shutdown without duplicate callbacks.
-- For the 2.0 release, mention immutable runtime collections and `ReadOnlyMemory<byte>` HID report data; profile JSON remains schema version 2.
+- Live extended, standard, and micro-gamepad updates.
+- Two same-vendor controllers receive distinct provider-lifetime IDs.
+- Independent disconnect and reconnect behavior.
+- Disconnect neutralizes buttons, axes, and triggers exactly once.
+- Provider stop and disposal do not produce duplicate callbacks.
+
+## Release
+
+- Confirm downstream applications build against the release candidate.
+- Document breaking API changes, immutable runtime collections, `ReadOnlyMemory<byte>` report data, and profile JSON schema v2 compatibility.
+- Create and push an annotated `v2.0.0` tag from the validated commit.
+- Publish all packages from that exact commit, then create the matching GitHub release.
