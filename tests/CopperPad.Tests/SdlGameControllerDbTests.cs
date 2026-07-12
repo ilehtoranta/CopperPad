@@ -1,5 +1,4 @@
 using CopperPad;
-using System.Runtime.InteropServices;
 
 public sealed class SdlGameControllerDbTests
 {
@@ -201,18 +200,18 @@ public sealed class SdlGameControllerDbTests
 	}
 
 	[Fact]
-	public void Factory_UsesUsbGamepadSdlEntryOnlyOnItsLinuxPlatform()
+	public void Database_SelectsOnlyMappingsForRequestedPlatform()
 	{
+		var mappings = SdlGameControllerDatabase.Parse("""
+			03000000790000000600000000000000,Windows Pad,a:b0,platform:Windows,
+			03000000790000000600000000000000,Linux Pad,a:b1,platform:Linux,
+			""");
 		var device = ControllerMapperTests.Device(0x0079, 0x0006, "Generic USB Joystick", isGameControllerUsage: true);
-		var mapper = ControllerMapperFactory.Create(device, ControllerProfileSet.Empty);
 
-		if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
-		{
-			Assert.Equal("SDL DB", mapper.MappingInfo.Source);
-		}
-		else
-		{
-			Assert.NotEqual("SDL DB", mapper.MappingInfo.Source);
-		}
+		Assert.True(SdlGameControllerDatabase.TryFindMapping(mappings, device, "Linux", out var linux));
+		Assert.Equal("Linux Pad", linux.Name);
+		Assert.True(SdlGameControllerDatabase.TryFindMapping(mappings, device, "Windows", out var windows));
+		Assert.Equal("Windows Pad", windows.Name);
+		Assert.False(SdlGameControllerDatabase.TryFindMapping(mappings, device, "Mac OS X", out _));
 	}
 }

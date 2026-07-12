@@ -40,7 +40,15 @@ internal static class SdlGameControllerDatabase
 			return false;
 		}
 
-		var currentPlatform = GetCurrentPlatform();
+		return TryFindMapping(mappings, device, GetCurrentPlatform(), out mapping);
+	}
+
+	internal static bool TryFindMapping(
+		IEnumerable<SdlControllerMapping> mappings,
+		HidDeviceDescriptor device,
+		string currentPlatform,
+		out SdlControllerMapping mapping)
+	{
 		var candidate = mappings
 			.Select(item => new { Mapping = item, Score = Score(item, device, currentPlatform) })
 			.OrderByDescending(item => item.Score)
