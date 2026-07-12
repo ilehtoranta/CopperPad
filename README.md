@@ -35,7 +35,7 @@ The repository produces three public packages:
 - `CopperPad.HidSharp`
 - `CopperPad.GameController`
 
-All packages are currently versioned `2.0.0`. See [RELEASE.md](RELEASE.md) for release validation and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance.
+All packages are currently versioned `2.0.0-preview.1`. The preview has passed automated Windows, Linux, and iOS compilation checks, but Apple controller behavior has not yet been verified on physical iOS hardware. See [RELEASE.md](RELEASE.md) for release validation and [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance.
 
 ## License
 

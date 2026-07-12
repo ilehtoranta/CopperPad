@@ -55,5 +55,6 @@ On physical iOS hardware, verify:
 
 - Confirm downstream applications build against the release candidate.
 - Document breaking API changes, immutable runtime collections, `ReadOnlyMemory<byte>` report data, and profile JSON schema v2 compatibility.
-- Create and push an annotated `v2.0.0` tag from the validated commit.
-- Publish all packages from that exact commit, then create the matching GitHub release.
+- Until the Apple hardware gate is complete, use a prerelease version such as `2.0.0-preview.1` and explicitly document the missing hardware validation.
+- Create and push an annotated version tag such as `v2.0.0-preview.1` from the validated commit.
+- The tag-triggered release workflow publishes all packages from that exact commit and creates the matching GitHub release. Hyphenated versions are marked as prereleases automatically.

@@ -1,0 +1,95 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+jobs:
+  publish:
+    name: Publish NuGet and GitHub release
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release version
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.300
+
+      - name: Select Xcode 26.5
+        run: sudo xcode-select --switch /Applications/Xcode_26.5.app/Contents/Developer
+
+      - name: Install iOS workload
+        run: dotnet workload install ios --version 10.0.300.3
+
+      - name: Restore and test
+        run: |
+          dotnet restore CopperPad.slnx
+          dotnet build CopperPad.slnx --configuration Release --no-restore -warnaserror
+          dotnet test CopperPad.slnx --configuration Release --no-build --no-restore
+
+      - name: Pack platform-neutral libraries
+        run: |
+          dotnet pack src/CopperPad/CopperPad.csproj --configuration Release --no-restore -warnaserror -p:PackageVersion="$VERSION" --output artifacts/packages
+          dotnet pack src/CopperPad.HidSharp/CopperPad.HidSharp.csproj --configuration Release --no-restore -warnaserror -p:PackageVersion="$VERSION" --output artifacts/packages
+
+      - name: Restore and pack iOS-enabled provider
+        run: |
+          dotnet restore src/CopperPad.GameController/CopperPad.GameController.csproj -p:EnableIOSProviderBuild=true
+          dotnet pack src/CopperPad.GameController/CopperPad.GameController.csproj --configuration Release --no-restore -warnaserror -p:EnableIOSProviderBuild=true -p:PackageVersion="$VERSION" --output artifacts/packages
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: CopperPad-${{ env.VERSION }}
+          path: |
+            artifacts/packages/*.nupkg
+            artifacts/packages/*.snupkg
+          if-no-files-found: error
+
+      - name: Publish to NuGet.org
+        run: dotnet nuget push "artifacts/packages/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+      - name: Create GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then
+            prerelease+=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" artifacts/packages/*.nupkg artifacts/packages/*.snupkg \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            "${prerelease[@]}"
