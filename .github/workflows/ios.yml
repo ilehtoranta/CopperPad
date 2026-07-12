@@ -1,0 +1,69 @@
+name: iOS
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build net10.0-ios
+    runs-on: macos-26
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.300
+
+      - name: Select Xcode 26.5
+        run: sudo xcode-select --switch /Applications/Xcode_26.5.app/Contents/Developer
+
+      - name: Install iOS workload
+        run: dotnet workload install ios --version 10.0.300.3
+
+      - name: Restore iOS target
+        run: >-
+          dotnet restore
+          src/CopperPad.GameController/CopperPad.GameController.csproj
+          -p:EnableIOSProviderBuild=true
+
+      - name: Build iOS target
+        run: >-
+          dotnet build
+          src/CopperPad.GameController/CopperPad.GameController.csproj
+          --configuration Release
+          --framework net10.0-ios
+          -p:EnableIOSProviderBuild=true
+          -warnaserror
+          --no-restore
+
+      - name: Pack iOS-enabled package
+        run: >-
+          dotnet pack
+          src/CopperPad.GameController/CopperPad.GameController.csproj
+          --configuration Release
+          -p:EnableIOSProviderBuild=true
+          -warnaserror
+          --no-restore
+          --output artifacts/packages
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: CopperPad.GameController-ios
+          path: artifacts/packages/*.nupkg
+          if-no-files-found: error
+
