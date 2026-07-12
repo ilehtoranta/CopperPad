@@ -85,6 +85,81 @@ public sealed class CopperControllerApiTests
 		Assert.True(controller.GetSnapshot().A);
 	}
 
+	[Fact]
+	public void Host_DisconnectReleasesExistingElementsOnce()
+	{
+		using var provider = new FakeControllerProvider();
+		using var host = new CopperControllerHost(provider);
+		var info = Info();
+		provider.SetControllers(info);
+		host.Start();
+		var controller = Assert.Single(host.GetControllers());
+		var changes = new List<CopperElementChangedEventArgs>();
+		controller.ElementChanged += (_, args) => changes.Add(args);
+		provider.Publish(Snapshot(true, new Dictionary<ControllerElement, ControllerElementValue>
+		{
+			[ControllerElement.South] = ControllerElementValue.Button(true),
+			[ControllerElement.LeftStickX] = ControllerElementValue.Axis(0.75)
+		}));
+		changes.Clear();
+
+		provider.Publish(Snapshot(false, new Dictionary<ControllerElement, ControllerElementValue>()));
+
+		Assert.Equal(2, changes.Count);
+		Assert.Contains(changes, change => change.Element == ControllerElement.South && !change.CurrentValue.IsPressed);
+		Assert.Contains(changes, change => change.Element == ControllerElement.LeftStickX && change.CurrentValue.Kind == ControllerElementValueKind.Axis && change.CurrentValue.Value == 0);
+	}
+
+	[Fact]
+	public void Host_RemovingControllerPublishesDisconnectToHeldController()
+	{
+		using var provider = new FakeControllerProvider();
+		using var host = new CopperControllerHost(provider);
+		provider.SetControllers(Info());
+		host.Start();
+		var controller = Assert.Single(host.GetControllers());
+		provider.Publish(Snapshot(true, new Dictionary<ControllerElement, ControllerElementValue>
+		{
+			[ControllerElement.South] = ControllerElementValue.Button(true)
+		}));
+		CopperElementChangedEventArgs? released = null;
+		controller.ElementChanged += (_, args) => released = args;
+
+		provider.SetControllers();
+		provider.RaiseControllersChanged();
+
+		Assert.NotNull(released);
+		Assert.False(released.CurrentValue.IsPressed);
+		Assert.False(controller.GetSnapshot().IsConnected);
+	}
+
+	[Fact]
+	public void RuntimeStateDefensivelyCopiesMutableCollections()
+	{
+		var elements = new Dictionary<ControllerElement, ControllerElementValue>
+		{
+			[ControllerElement.South] = ControllerElementValue.Button(true)
+		};
+		var profiles = new HashSet<ControllerProfileKind> { ControllerProfileKind.StandardGamepad };
+		var snapshot = Snapshot(true, elements, profiles);
+
+		elements.Clear();
+		profiles.Clear();
+
+		Assert.True(snapshot.South);
+		Assert.Contains(ControllerProfileKind.StandardGamepad, snapshot.SupportedProfiles);
+	}
+
+	private static CopperControllerInfo Info()
+		=> new("pad", "Pad", 1, 2, ControllerTransport.Usb, true, [ControllerProfileKind.StandardGamepad], ControllerMappingSource.UserProfile, "test", null);
+
+	private static CopperControllerSnapshot Snapshot(
+		bool connected,
+		IEnumerable<KeyValuePair<ControllerElement, ControllerElementValue>> elements,
+		IEnumerable<ControllerProfileKind>? profiles = null)
+		=> new("pad", DateTimeOffset.UtcNow, connected, "Pad", 1, 2, ControllerTransport.Usb, elements,
+			profiles ?? [ControllerProfileKind.StandardGamepad], ControllerMappingSource.UserProfile, "test", null);
+
 	private sealed class FakeControllerProvider : IControllerProvider
 	{
 		private IReadOnlyList<CopperControllerInfo> _controllers = Array.Empty<CopperControllerInfo>();
@@ -113,6 +188,9 @@ public sealed class CopperControllerApiTests
 
 		public void Publish(CopperControllerSnapshot snapshot)
 			=> SnapshotChanged?.Invoke(this, new CopperControllerSnapshotChangedEventArgs(snapshot));
+
+		public void RaiseControllersChanged()
+			=> ControllersChanged?.Invoke(this, new CopperControllersChangedEventArgs(_controllers));
 
 		public void Dispose()
 		{

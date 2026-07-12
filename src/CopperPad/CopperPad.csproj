@@ -9,7 +9,7 @@
     <Title>CopperPad</Title>
     <Authors>Ilkka Lehtoranta</Authors>
     <Description>Portable .NET game controller normalization library.</Description>
-    <PackageVersion>1.0.0</PackageVersion>
+    <PackageVersion>2.0.0</PackageVersion>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ilehtoranta/CopperMod</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ilehtoranta/CopperMod.git</RepositoryUrl>

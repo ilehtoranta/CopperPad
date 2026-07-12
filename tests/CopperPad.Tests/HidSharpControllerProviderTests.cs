@@ -25,7 +25,7 @@ public sealed class HidSharpControllerProviderTests
 		Assert.InRange(snapshot.GetAxis(ControllerElement.LeftStickX), 0.99, 1.0);
 		Assert.True(snapshot.IsPressed(ControllerElement.DPadUp));
 		Assert.Equal(ControllerMappingSource.Fallback, snapshot.MappingSource);
-		Assert.Equal(1, changedCount);
+		Assert.Equal(2, changedCount); // discovery plus disconnected-to-connected transition
 		Assert.Equal(snapshot, observedSnapshot);
 	}
 
@@ -69,6 +69,49 @@ public sealed class HidSharpControllerProviderTests
 		Assert.Equal(joystick.Id, controller.Id);
 	}
 
+	[Fact]
+	public async Task Provider_RetriesTransientOpenFailure()
+	{
+		var device = ControllerMapperTests.Device(0x1111, 0x2222, "Retry Gamepad", isGameControllerUsage: true);
+		var stream = new FakeHidInputStream(device.MaxInputReportLength);
+		var provider = new FakeHidDeviceProvider();
+		provider.SetDevices(device);
+		provider.SetStream(device.Id, stream);
+		provider.FailNextOpens(1);
+		using var controllerProvider = new HidSharpControllerProvider(provider, new HidSharpControllerProviderOptions());
+
+		controllerProvider.Start();
+		stream.Enqueue([255, 128, 128, 128, 0, 0, 0x01, 0]);
+		var snapshot = await WaitForSnapshotAsync(controllerProvider, device.Id);
+
+		Assert.True(snapshot.IsConnected);
+		Assert.True(provider.OpenCount >= 2);
+	}
+
+	[Fact]
+	public void Provider_StopCanBeCalledFromSnapshotCallbackAndDisposesDeviceProvider()
+	{
+		var device = ControllerMapperTests.Device(0x1111, 0x2222, "Reentrant Gamepad", isGameControllerUsage: true);
+		var stream = new FakeHidInputStream(device.MaxInputReportLength);
+		var provider = new FakeHidDeviceProvider();
+		provider.SetDevices(device);
+		provider.SetStream(device.Id, stream);
+		var controllerProvider = new HidSharpControllerProvider(provider, new HidSharpControllerProviderOptions());
+		using var stopped = new ManualResetEventSlim();
+		controllerProvider.SnapshotChanged += (_, _) =>
+		{
+			controllerProvider.Stop();
+			stopped.Set();
+		};
+
+		controllerProvider.Start();
+		stream.Enqueue([128, 128, 128, 128, 0, 0, 0, 8]);
+
+		Assert.True(stopped.Wait(TimeSpan.FromSeconds(2)));
+		controllerProvider.Dispose();
+		Assert.True(provider.IsDisposed);
+	}
+
 	private static async Task<CopperControllerSnapshot> WaitForSnapshotAsync(HidSharpControllerProvider provider, string id)
 	{
 		for (var i = 0; i < 50; i++)
@@ -88,6 +131,10 @@ public sealed class HidSharpControllerProviderTests
 	{
 		private readonly Dictionary<string, FakeHidInputStream> _streams = new(StringComparer.Ordinal);
 		private IReadOnlyList<HidDeviceDescriptor> _devices = Array.Empty<HidDeviceDescriptor>();
+		private int _openFailures;
+
+		public int OpenCount { get; private set; }
+		public bool IsDisposed { get; private set; }
 
 		public event EventHandler? Changed;
 
@@ -95,9 +142,18 @@ public sealed class HidSharpControllerProviderTests
 			=> _devices;
 
 		public IHidInputStream Open(HidDeviceDescriptor device, TimeSpan readTimeout)
-			=> _streams.TryGetValue(device.Id, out var stream)
+		{
+			OpenCount++;
+			if (_openFailures > 0)
+			{
+				_openFailures--;
+				throw new IOException("Transient open failure.");
+			}
+
+			return _streams.TryGetValue(device.Id, out var stream)
 				? stream
 				: throw new IOException("No fake stream registered.");
+		}
 
 		public void SetDevices(params HidDeviceDescriptor[] devices)
 			=> _devices = devices;
@@ -105,8 +161,14 @@ public sealed class HidSharpControllerProviderTests
 		public void SetStream(string id, FakeHidInputStream stream)
 			=> _streams[id] = stream;
 
+		public void FailNextOpens(int count)
+			=> _openFailures = count;
+
 		public void RaiseChanged()
 			=> Changed?.Invoke(this, EventArgs.Empty);
+
+		public void Dispose()
+			=> IsDisposed = true;
 	}
 
 	private sealed class FakeHidInputStream(int maxInputReportLength) : IHidInputStream

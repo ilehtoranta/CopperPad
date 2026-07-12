@@ -189,6 +189,56 @@ public sealed class ControllerMapperTests
 		Assert.Equal(1, pressed.GetAxis(ControllerElement.LeftTrigger), precision: 3);
 	}
 
+	[Theory]
+	[InlineData(ControllerBindingSourceKind.ReportByte, 0, 0, null)]
+	[InlineData(ControllerBindingSourceKind.ReportInt16LittleEndian, 0, 0, null)]
+	[InlineData(ControllerBindingSourceKind.Hat, 0, 0, 0)]
+	public void ProfileMapper_AppliesInvertToAllDigitalSources(ControllerBindingSourceKind kind, int offset, int bit, int? hat)
+	{
+		var device = Device(1, 2, "Inverted Pad");
+		var profile = new ControllerProfile
+		{
+			Name = "invert",
+			VendorId = 1,
+			ProductId = 2,
+			Bindings =
+			[
+				new ControllerBinding
+				{
+					Target = ControllerElement.A,
+					Source = new ControllerBindingSource { Kind = kind, Offset = offset, Bit = bit, HatValue = hat, Invert = true }
+				}
+			]
+		};
+		var mapper = ControllerMapperFactory.Create(device, new ControllerProfileSet { Profiles = [profile] });
+
+		var report = kind == ControllerBindingSourceKind.Hat ? new byte[] { 8, 0 } : new byte[] { 0, 0 };
+		var state = mapper.Map(new RawControllerInput(device, report, 2, DateTimeOffset.UtcNow));
+
+		Assert.True(state.IsPressed(ControllerElement.A));
+	}
+
+	[Fact]
+	public void ProfileMapper_NeutralHatMatchesOnlyNeutralInput()
+	{
+		var source = new ControllerBindingSource { Kind = ControllerBindingSourceKind.Hat, Offset = 0, HatValue = 8 };
+		var profile = new ControllerProfile
+		{
+			Name = "neutral",
+			VendorId = 1,
+			ProductId = 2,
+			Bindings = [new ControllerBinding { Target = ControllerElement.A, Source = source }]
+		};
+		var device = Device(1, 2, "Hat Pad");
+		var mapper = ControllerMapperFactory.Create(device, new ControllerProfileSet { Profiles = [profile] });
+
+		var neutral = mapper.Map(new RawControllerInput(device, [8], 1, DateTimeOffset.UtcNow));
+		var direction = mapper.Map(new RawControllerInput(device, [0], 1, DateTimeOffset.UtcNow));
+
+		Assert.True(neutral.IsPressed(ControllerElement.A));
+		Assert.False(direction.IsPressed(ControllerElement.A));
+	}
+
 	[Fact]
 	public void UnknownDevice_ProducesDiagnosticState()
 	{

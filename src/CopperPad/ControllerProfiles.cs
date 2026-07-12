@@ -196,7 +196,7 @@ public static class JsonControllerProfileSerializer
 	/// <param name="profiles">Profiles to serialize.</param>
 	/// <returns>Formatted JSON using the current schema version.</returns>
 	public static string Serialize(ControllerProfileSet profiles)
-		=> JsonSerializer.Serialize(Upgrade(profiles), Options);
+		=> JsonSerializer.Serialize(ValidateAndUpgrade(profiles), Options);
 
 	/// <summary>
 	/// Deserializes a profile set from JSON.
@@ -204,7 +204,7 @@ public static class JsonControllerProfileSerializer
 	/// <param name="json">Profile JSON.</param>
 	/// <returns>The deserialized profile set upgraded to the current schema version.</returns>
 	public static ControllerProfileSet Deserialize(string json)
-		=> Upgrade(JsonSerializer.Deserialize<ControllerProfileSet>(json, Options) ?? ControllerProfileSet.Empty);
+		=> ValidateAndUpgrade(JsonSerializer.Deserialize<ControllerProfileSet>(json, Options) ?? ControllerProfileSet.Empty);
 
 	/// <summary>
 	/// Loads a profile set from a stream.
@@ -213,7 +213,7 @@ public static class JsonControllerProfileSerializer
 	/// <param name="cancellationToken">Token used to cancel the load.</param>
 	/// <returns>The loaded profile set upgraded to the current schema version.</returns>
 	public static async ValueTask<ControllerProfileSet> LoadAsync(Stream stream, CancellationToken cancellationToken = default)
-		=> Upgrade(await JsonSerializer.DeserializeAsync<ControllerProfileSet>(stream, Options, cancellationToken).ConfigureAwait(false) ??
+		=> ValidateAndUpgrade(await JsonSerializer.DeserializeAsync<ControllerProfileSet>(stream, Options, cancellationToken).ConfigureAwait(false) ??
 			ControllerProfileSet.Empty);
 
 	/// <summary>
@@ -224,8 +224,99 @@ public static class JsonControllerProfileSerializer
 	/// <param name="cancellationToken">Token used to cancel the save.</param>
 	/// <returns>A task that completes when serialization is finished.</returns>
 	public static async ValueTask SaveAsync(Stream stream, ControllerProfileSet profiles, CancellationToken cancellationToken = default)
-		=> await JsonSerializer.SerializeAsync(stream, Upgrade(profiles), Options, cancellationToken).ConfigureAwait(false);
+		=> await JsonSerializer.SerializeAsync(stream, ValidateAndUpgrade(profiles), Options, cancellationToken).ConfigureAwait(false);
 
-	private static ControllerProfileSet Upgrade(ControllerProfileSet profiles)
-		=> profiles.SchemaVersion >= 2 ? profiles : profiles with { SchemaVersion = 2 };
+	private static ControllerProfileSet ValidateAndUpgrade(ControllerProfileSet profiles)
+	{
+		if (profiles.SchemaVersion is < 1 or > 2)
+		{
+			throw new JsonException($"Unsupported controller profile schema version {profiles.SchemaVersion}.");
+		}
+
+		if (profiles.Profiles == null)
+		{
+			throw new JsonException("The profiles collection cannot be null.");
+		}
+
+		for (var profileIndex = 0; profileIndex < profiles.Profiles.Count; profileIndex++)
+		{
+			var profile = profiles.Profiles[profileIndex];
+			if (profile == null)
+			{
+				throw new JsonException($"Profile {profileIndex} cannot be null.");
+			}
+
+			ValidateProfile(profile, profileIndex);
+		}
+
+		return profiles.SchemaVersion == 2 ? profiles : profiles with { SchemaVersion = 2 };
+	}
+
+	private static void ValidateProfile(ControllerProfile profile, int profileIndex)
+	{
+		if (string.IsNullOrWhiteSpace(profile.Name))
+		{
+			throw new JsonException($"Profile {profileIndex} must have a name.");
+		}
+
+		if (profile.Bindings == null)
+		{
+			throw new JsonException($"Profile '{profile.Name}' bindings cannot be null.");
+		}
+
+		var duplicate = profile.Bindings.GroupBy(binding => binding?.Target).FirstOrDefault(group => group.Count() > 1);
+		if (duplicate != null)
+		{
+			throw new JsonException($"Profile '{profile.Name}' has duplicate bindings for {duplicate.Key}.");
+		}
+
+		for (var bindingIndex = 0; bindingIndex < profile.Bindings.Count; bindingIndex++)
+		{
+			var binding = profile.Bindings[bindingIndex];
+			if (binding == null || binding.Source == null)
+			{
+				throw new JsonException($"Profile '{profile.Name}' binding {bindingIndex} is incomplete.");
+			}
+
+			ValidateBinding(profile.Name, binding);
+		}
+	}
+
+	private static void ValidateBinding(string profileName, ControllerBinding binding)
+	{
+		var source = binding.Source;
+		if (!Enum.IsDefined(source.Kind) || !Enum.IsDefined(binding.Target))
+		{
+			throw new JsonException($"Profile '{profileName}' contains an unknown binding value.");
+		}
+
+		if (source.Offset < 0)
+		{
+			throw new JsonException($"Profile '{profileName}' binding {binding.Target} has a negative offset.");
+		}
+
+		if (source.Kind == ControllerBindingSourceKind.ReportBit && source.Bit is < 0 or > 7)
+		{
+			throw new JsonException($"Profile '{profileName}' binding {binding.Target} has an invalid bit index.");
+		}
+
+		if (source.Kind == ControllerBindingSourceKind.Hat && source.HatValue is not (>= 0 and <= 15))
+		{
+			throw new JsonException($"Profile '{profileName}' binding {binding.Target} has an invalid hat value.");
+		}
+
+		if (binding.Axis is { } axis)
+		{
+			if (axis.Maximum <= axis.Minimum || axis.Center is { } center && (center < axis.Minimum || center > axis.Maximum))
+			{
+				throw new JsonException($"Profile '{profileName}' binding {binding.Target} has an invalid calibration range.");
+			}
+
+			if (!double.IsFinite(axis.Deadzone) || axis.Deadzone is < 0 or > 0.95 ||
+				!double.IsFinite(axis.Saturation) || axis.Saturation is < 0.01 or > 1)
+			{
+				throw new JsonException($"Profile '{profileName}' binding {binding.Target} has invalid calibration options.");
+			}
+		}
+	}
 }

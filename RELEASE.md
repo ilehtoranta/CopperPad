@@ -48,3 +48,5 @@ dotnet build CopperScreen\CopperScreen.csproj -c Release
 - Mention the breaking profile-first API.
 - Mention that SDL_GameControllerDB data is bundled with `CopperPad.HidSharp` under the zlib license.
 - If publishing `CopperPad.GameController`, pack the real `net10.0-ios` target on macOS with the iOS workload.
+- On iOS hardware, verify live extended/standard snapshots, two same-vendor controllers with distinct IDs, independent disconnect/reconnect, and shutdown without duplicate callbacks.
+- For the 2.0 release, mention immutable runtime collections and `ReadOnlyMemory<byte>` HID report data; profile JSON remains schema version 2.

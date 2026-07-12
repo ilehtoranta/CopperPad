@@ -5,6 +5,8 @@
 
 namespace CopperPad;
 
+using System.Collections.Immutable;
+
 internal static class InputNormalization
 {
 	public static double NormalizeAxis(
@@ -82,17 +84,17 @@ internal static class InputNormalization
 
 internal sealed class CopperControllerSnapshotBuilder
 {
-	private static readonly IReadOnlySet<ControllerProfileKind> MappedProfiles = new HashSet<ControllerProfileKind>
-	{
+	private static readonly ImmutableHashSet<ControllerProfileKind> MappedProfiles =
+	[
 		ControllerProfileKind.StandardGamepad,
 		ControllerProfileKind.ExtendedGamepad,
 		ControllerProfileKind.RawInput
-	};
+	];
 
-	private static readonly IReadOnlySet<ControllerProfileKind> RawOnlyProfiles = new HashSet<ControllerProfileKind>
-	{
+	private static readonly ImmutableHashSet<ControllerProfileKind> RawOnlyProfiles =
+	[
 		ControllerProfileKind.RawInput
-	};
+	];
 
 	public bool A;
 	public bool B;

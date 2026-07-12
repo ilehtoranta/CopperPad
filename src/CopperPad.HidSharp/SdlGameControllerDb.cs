@@ -226,9 +226,15 @@ internal sealed record SdlControllerMapping(
 	public CopperControllerSnapshot Map(HidDeviceDescriptor device, DateTimeOffset timestamp, SdlInputSnapshot snapshot)
 	{
 		var builder = new CopperControllerSnapshotBuilder();
+		var axes = new Dictionary<ControllerElement, double>();
 		foreach (var binding in Bindings)
 		{
-			ApplyBinding(builder, binding, snapshot);
+			ApplyBinding(builder, axes, binding, snapshot);
+		}
+
+		foreach (var axis in axes)
+		{
+			SetAxis(builder, axis.Key, axis.Value);
 		}
 
 		return builder.Build(device, timestamp, MappingInfo);
@@ -310,11 +316,16 @@ internal sealed record SdlControllerMapping(
 		return true;
 	}
 
-	private static void ApplyBinding(CopperControllerSnapshotBuilder builder, SdlControllerBinding binding, SdlInputSnapshot snapshot)
+	private static void ApplyBinding(
+		CopperControllerSnapshotBuilder builder,
+		Dictionary<ControllerElement, double> axes,
+		SdlControllerBinding binding,
+		SdlInputSnapshot snapshot)
 	{
 		if (IsAxis(binding.Target))
 		{
-			SetAxis(builder, binding.Target, ReadAxis(binding, snapshot));
+			axes.TryGetValue(binding.Target, out var current);
+			axes[binding.Target] = Math.Clamp(current + ReadAxis(binding, snapshot), -1, 1);
 			return;
 		}
 
@@ -328,19 +339,34 @@ internal sealed record SdlControllerMapping(
 	}
 
 	private static bool ReadButton(SdlInputSource source, SdlInputSnapshot snapshot)
-		=> source.Kind switch
+	{
+		var pressed = source.Kind switch
 		{
 			SdlInputSourceKind.Button => snapshot.GetButton(source.Index),
 			SdlInputSourceKind.Hat => (snapshot.GetHat(source.Index) & source.HatMask) != 0,
 			SdlInputSourceKind.Axis => Math.Abs(ReadAxisSource(source, snapshot)) >= 0.5,
 			_ => false
 		};
+		return source.Kind == SdlInputSourceKind.Axis || !source.Invert ? pressed : !pressed;
+	}
 
 	private static double ReadAxis(SdlControllerBinding binding, SdlInputSnapshot snapshot)
 	{
-		var value = binding.Source.Kind == SdlInputSourceKind.Hat
-			? ReadHatAxis(binding, snapshot)
-			: ReadAxisSource(binding.Source, snapshot);
+		var value = binding.Source.Kind switch
+		{
+			SdlInputSourceKind.Button => snapshot.GetButton(binding.Source.Index) ? 1 : 0,
+			SdlInputSourceKind.Hat => (snapshot.GetHat(binding.Source.Index) & binding.Source.HatMask) != 0 ? 1 : 0,
+			_ => ReadAxisSource(binding.Source, snapshot)
+		};
+		if (binding.Source.Kind is SdlInputSourceKind.Button or SdlInputSourceKind.Hat && binding.Source.Invert)
+		{
+			value = value == 0 ? 1 : 0;
+		}
+
+		if (binding.TargetPolarity != SdlPolarity.None)
+		{
+			value = Math.Abs(value) * (binding.TargetPolarity == SdlPolarity.Negative ? -1 : 1);
+		}
 		if (binding.Target is ControllerElement.LeftStickY or ControllerElement.RightStickY)
 		{
 			value = -value;
@@ -349,25 +375,17 @@ internal sealed record SdlControllerMapping(
 		return value;
 	}
 
-	private static double ReadHatAxis(SdlControllerBinding binding, SdlInputSnapshot snapshot)
-	{
-		var active = (snapshot.GetHat(binding.Source.Index) & binding.Source.HatMask) != 0;
-		if (!active)
-		{
-			return 0;
-		}
-
-		return binding.TargetPolarity == SdlPolarity.Negative ? -1 : 1;
-	}
-
 	private static double ReadTrigger(SdlInputSource source, SdlInputSnapshot snapshot)
-		=> source.Kind switch
+	{
+		var value = source.Kind switch
 		{
 			SdlInputSourceKind.Button => snapshot.GetButton(source.Index) ? 1 : 0,
 			SdlInputSourceKind.Axis => ReadTriggerAxis(source, snapshot),
 			SdlInputSourceKind.Hat => (snapshot.GetHat(source.Index) & source.HatMask) != 0 ? 1 : 0,
 			_ => 0
 		};
+		return source.Invert ? 1 - value : value;
+	}
 
 	private static double ReadAxisSource(SdlInputSource source, SdlInputSnapshot snapshot)
 	{
@@ -490,6 +508,12 @@ internal sealed record SdlInputSource(SdlInputSourceKind Kind, int Index, SdlPol
 			}
 
 			value = value[1..];
+		}
+
+		while (value.EndsWith('~'))
+		{
+			invert = !invert;
+			value = value[..^1];
 		}
 
 		if (value.Length < 2)

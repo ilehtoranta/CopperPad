@@ -11,7 +11,11 @@ Desktop HID support lives in `CopperPad.HidSharp`. Apple GameController support 
 - Linux HID support uses hidraw through HidSharp; users may need udev rules or group permissions for non-root access.
 - iOS support uses Apple's GameController APIs through `CopperPad.GameController`; validation requires Mac/iOS hardware.
 
-Version 1 focuses on profile-first snapshots, device attach/detach, normalization, and app-supplied JSON profile overrides. Rumble/force feedback is intentionally out of scope.
+Version 2 provides immutable runtime snapshots, reliable disconnect/reconnect transitions, profile-first mapping, normalization, and app-supplied JSON profile overrides. Rumble/force feedback is intentionally out of scope.
+
+## Version 2 migration
+
+Runtime element/profile collections are immutable collections. HID report descriptors and raw reports are exposed as `ReadOnlyMemory<byte>`; call `.Span` for inspection or `.ToArray()` when an owned array is required. Controller profile JSON remains schema version 2.
 
 ## Quick example
 

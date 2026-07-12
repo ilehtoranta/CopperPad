@@ -10,6 +10,8 @@ dotnet build CopperPad/src/CopperPad.GameController -p:EnableIOSProviderBuild=tr
 
 Manual validation requires iOS hardware or an Apple-supported controller environment.
 
+Before release, connect two controllers with the same vendor name and verify that both receive unique IDs, publish live snapshots, disconnect independently, reconnect, and stop without duplicate callbacks.
+
 ## Quick example
 
 ```csharp

@@ -61,7 +61,7 @@ internal sealed class MainWindow : Window, IDisposable
 	private readonly ComboBox _sourceKindBox = new() { MinWidth = 220 };
 	private readonly NumericUpDown _offsetBox = NumberBox(0, 512);
 	private readonly NumericUpDown _bitBox = NumberBox(0, 7);
-	private readonly NumericUpDown _hatBox = NumberBox(0, 8);
+	private readonly NumericUpDown _hatBox = NumberBox(0, 15);
 	private readonly CheckBox _sourceInvertCheck = new() { Content = "Active low / inverted" };
 	private readonly ListBox _bindingsList = new() { MinHeight = 140, MaxHeight = 260 };
 	private readonly Button _startGuidedMappingButton = new() { Content = "Start Guided Mapping" };
@@ -1320,16 +1320,17 @@ internal sealed class MainWindow : Window, IDisposable
 			CreatedAt = _draftProfile.CreatedAt ?? now,
 			UpdatedAt = now
 		};
-		_profiles = ProfileEditor.MergeProfile(_profiles, profile);
-		_draftProfile = profile;
+		var candidateProfiles = ProfileEditor.MergeProfile(_profiles, profile);
 		try
 		{
-			await _profileStore.SaveAsync(_profiles).ConfigureAwait(true);
+			await _profileStore.SaveAsync(candidateProfiles).ConfigureAwait(true);
+			_profiles = candidateProfiles;
+			_draftProfile = profile;
 			_host.UpdateProfiles(_profiles);
 			UpdateSelectedDeviceDetails();
 			SetStatus("Saved " + profile.Name);
 		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
 		{
 			SetStatus("Profile save failed: " + ex.Message);
 		}
@@ -1355,8 +1356,9 @@ internal sealed class MainWindow : Window, IDisposable
 		try
 		{
 			await using var stream = await file.OpenReadAsync().ConfigureAwait(true);
-			_profiles = await JsonControllerProfileSerializer.LoadAsync(stream).ConfigureAwait(true);
-			await _profileStore.SaveAsync(_profiles).ConfigureAwait(true);
+			var importedProfiles = await JsonControllerProfileSerializer.LoadAsync(stream).ConfigureAwait(true);
+			await _profileStore.SaveAsync(importedProfiles).ConfigureAwait(true);
+			_profiles = importedProfiles;
 			_host.UpdateProfiles(_profiles);
 			if (_selectedDevice != null)
 			{
@@ -1391,6 +1393,10 @@ internal sealed class MainWindow : Window, IDisposable
 		try
 		{
 			await using var stream = await file.OpenWriteAsync().ConfigureAwait(true);
+			if (stream.CanSeek)
+			{
+				stream.SetLength(0);
+			}
 			await JsonControllerProfileSerializer.SaveAsync(stream, _profiles).ConfigureAwait(true);
 			SetStatus("Exported profiles to " + file.Name);
 		}
@@ -1443,7 +1449,7 @@ internal sealed class MainWindow : Window, IDisposable
 			Offset = DecimalToInt(_offsetBox.Value),
 			Bit = DecimalToInt(_bitBox.Value),
 			HatValue = kind == ControllerBindingSourceKind.Hat ? DecimalToInt(_hatBox.Value) : null,
-			Invert = kind == ControllerBindingSourceKind.ReportBit && _sourceInvertCheck.IsChecked == true
+			Invert = _sourceInvertCheck.IsEnabled && _sourceInvertCheck.IsChecked == true
 		};
 	}
 
@@ -1614,7 +1620,7 @@ internal sealed class MainWindow : Window, IDisposable
 		var profileText = ProfileDocumentDisplay.Format(_profileStore.Path, savedProfile != null, _draftProfile);
 		_controllerSummaryText.Text =
 			$"{_selectedDevice.ProductName}\n{mappingText}\n{profileText}\nVID/PID: 0x{_selectedDevice.VendorId:X4}/0x{_selectedDevice.ProductId:X4}\nTransport: {_selectedDevice.Transport}\nInput report: {_selectedDevice.MaxInputReportLength} bytes\nReport IDs: {(_selectedDevice.ReportsUseId ? "yes" : "no")}\nUsage: {(_selectedDevice.IsGameControllerUsage ? "game controller" : "generic HID")}\n{_selectedDevice.Diagnostic}";
-		_descriptorText.Text = mappingText + "\n" + profileText + "\n\nDescriptor\n" + ToHexRows(_selectedDevice.ReportDescriptor);
+		_descriptorText.Text = mappingText + "\n" + profileText + "\n\nDescriptor\n" + ToHexRows(_selectedDevice.ReportDescriptor.ToArray());
 		_saveProfileButton.Content = "Save Profile";
 		_testProfileButton.IsEnabled = savedProfile != null;
 		_createProfileButton.IsEnabled = true;
@@ -1743,7 +1749,9 @@ internal sealed class MainWindow : Window, IDisposable
 			: ControllerBindingSourceKind.ReportBit;
 		_bitBox.IsEnabled = kind == ControllerBindingSourceKind.ReportBit;
 		_hatBox.IsEnabled = kind == ControllerBindingSourceKind.Hat;
-		_sourceInvertCheck.IsEnabled = kind == ControllerBindingSourceKind.ReportBit;
+		var target = GetSelectedTarget();
+		_sourceInvertCheck.IsEnabled = !ProfileEditor.IsAxisTarget(target) ||
+			(ProfileEditor.IsTriggerTarget(target) && kind is ControllerBindingSourceKind.ReportBit or ControllerBindingSourceKind.Hat);
 	}
 
 	private void SetIndicator(ControllerElement control, bool active)

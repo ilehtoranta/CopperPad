@@ -5,40 +5,79 @@
 
 namespace CopperPad;
 
+using System.Collections.Immutable;
+
 /// <summary>
 /// Describes one HID device discovered by diagnostics enumeration.
 /// </summary>
-/// <param name="Id">Stable provider-specific HID device identifier.</param>
-/// <param name="ProductName">Human-readable HID product name.</param>
-/// <param name="VendorId">USB/HID vendor identifier.</param>
-/// <param name="ProductId">USB/HID product identifier.</param>
-/// <param name="Transport">Best-known device transport.</param>
-/// <param name="MaxInputReportLength">Maximum input report length reported by the device.</param>
-/// <param name="ReportDescriptor">Raw HID report descriptor bytes.</param>
-/// <param name="IsGameControllerUsage">Whether the descriptor advertises a game-controller usage.</param>
-/// <param name="ReportsUseId">Whether input reports include report IDs.</param>
-/// <param name="Diagnostic">Descriptor or enumeration diagnostic message, when available.</param>
-public sealed record HidDeviceInfo(
-	string Id,
-	string ProductName,
-	int VendorId,
-	int ProductId,
-	ControllerTransport Transport,
-	int MaxInputReportLength,
-	byte[] ReportDescriptor,
-	bool IsGameControllerUsage,
-	bool ReportsUseId,
-	string? Diagnostic);
+public sealed record HidDeviceInfo
+{
+	/// <summary>Creates immutable HID device metadata.</summary>
+	/// <param name="id">Stable provider-specific identifier.</param>
+	/// <param name="productName">Human-readable product name.</param>
+	/// <param name="vendorId">USB/HID vendor identifier.</param>
+	/// <param name="productId">USB/HID product identifier.</param>
+	/// <param name="transport">Best-known transport.</param>
+	/// <param name="maxInputReportLength">Maximum input report length.</param>
+	/// <param name="reportDescriptor">Raw HID report descriptor.</param>
+	/// <param name="isGameControllerUsage">Whether a game-controller usage is advertised.</param>
+	/// <param name="reportsUseId">Whether reports include IDs.</param>
+	/// <param name="diagnostic">Descriptor or enumeration diagnostic.</param>
+	public HidDeviceInfo(
+		string id,
+		string productName,
+		int vendorId,
+		int productId,
+		ControllerTransport transport,
+		int maxInputReportLength,
+		ReadOnlyMemory<byte> reportDescriptor,
+		bool isGameControllerUsage,
+		bool reportsUseId,
+		string? diagnostic)
+	{
+		Id = id;
+		ProductName = productName;
+		VendorId = vendorId;
+		ProductId = productId;
+		Transport = transport;
+		MaxInputReportLength = maxInputReportLength;
+		ReportDescriptor = reportDescriptor.ToArray();
+		IsGameControllerUsage = isGameControllerUsage;
+		ReportsUseId = reportsUseId;
+		Diagnostic = diagnostic;
+	}
+
+	/// <summary>Gets the stable provider-specific identifier.</summary>
+	public string Id { get; init; }
+	/// <summary>Gets the product name.</summary>
+	public string ProductName { get; init; }
+	/// <summary>Gets the vendor identifier.</summary>
+	public int VendorId { get; init; }
+	/// <summary>Gets the product identifier.</summary>
+	public int ProductId { get; init; }
+	/// <summary>Gets the best-known transport.</summary>
+	public ControllerTransport Transport { get; init; }
+	/// <summary>Gets the maximum input report length.</summary>
+	public int MaxInputReportLength { get; init; }
+	/// <summary>Gets an immutable copy of the raw report descriptor.</summary>
+	public ReadOnlyMemory<byte> ReportDescriptor { get; }
+	/// <summary>Gets whether a game-controller usage is advertised.</summary>
+	public bool IsGameControllerUsage { get; init; }
+	/// <summary>Gets whether reports include report IDs.</summary>
+	public bool ReportsUseId { get; init; }
+	/// <summary>Gets the descriptor or enumeration diagnostic.</summary>
+	public string? Diagnostic { get; init; }
+}
 
 /// <summary>
 /// Event data for HID diagnostics device-list changes.
 /// </summary>
 /// <param name="devices">Current HID device list.</param>
 /// <param name="diagnostic">Enumeration diagnostic message, when available.</param>
-public sealed class HidDevicesChangedEventArgs(IReadOnlyList<HidDeviceInfo> devices, string? diagnostic = null) : EventArgs
+public sealed class HidDevicesChangedEventArgs(IEnumerable<HidDeviceInfo> devices, string? diagnostic = null) : EventArgs
 {
 	/// <summary>Gets the current HID device list.</summary>
-	public IReadOnlyList<HidDeviceInfo> Devices { get; } = devices;
+	public ImmutableArray<HidDeviceInfo> Devices { get; } = devices.ToImmutableArray();
 	/// <summary>Gets an enumeration diagnostic message, when available.</summary>
 	public string? Diagnostic { get; } = diagnostic;
 }
@@ -55,7 +94,7 @@ public sealed class ControllerRawReportReceivedEventArgs(HidDeviceInfo device, b
 	/// <summary>Gets the selected HID device.</summary>
 	public HidDeviceInfo Device { get; } = device;
 	/// <summary>Gets a copy of the raw report bytes.</summary>
-	public byte[] Report { get; } = report;
+	public ReadOnlyMemory<byte> Report { get; } = report.AsMemory(0, Math.Min(length, report.Length)).ToArray();
 	/// <summary>Gets the number of valid bytes in <see cref="Report"/>.</summary>
 	public int Length { get; } = length;
 	/// <summary>Gets the time the report was read.</summary>
@@ -119,6 +158,7 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 	public void Start()
 	{
 		ThrowIfDisposed();
+		HidDevicesChangedEventArgs? changed = null;
 		lock (_gate)
 		{
 			if (_started)
@@ -127,13 +167,16 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 			}
 
 			_started = true;
-			RescanLocked(restartReader: true);
+			changed = RescanLocked(restartReader: true);
 		}
+
+		DevicesChanged?.Invoke(this, changed);
 	}
 
 	/// <summary>Stops HID enumeration and selected-device reading.</summary>
 	public void Stop()
 	{
+		HidDevicesChangedEventArgs? changed = null;
 		lock (_gate)
 		{
 			if (!_started)
@@ -145,8 +188,10 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 			StopReaderLocked();
 			_descriptors = [];
 			_devices = [];
-			RaiseDevicesChangedLocked();
+			changed = new HidDevicesChangedEventArgs(_devices, _diagnostic);
 		}
+
+		DevicesChanged?.Invoke(this, changed);
 	}
 
 	/// <summary>
@@ -225,20 +270,27 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 		_disposed = true;
 		_provider.Changed -= OnProviderChanged;
 		Stop();
+		_provider.Dispose();
 	}
 
 	private void OnProviderChanged(object? sender, EventArgs args)
 	{
+		HidDevicesChangedEventArgs? changed = null;
 		lock (_gate)
 		{
 			if (_started)
 			{
-				RescanLocked(restartReader: true);
+				changed = RescanLocked(restartReader: true);
 			}
+		}
+
+		if (changed != null)
+		{
+			DevicesChanged?.Invoke(this, changed);
 		}
 	}
 
-	private void RescanLocked(bool restartReader)
+	private HidDevicesChangedEventArgs RescanLocked(bool restartReader)
 	{
 		try
 		{
@@ -257,8 +309,7 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 			_devices = [];
 			_selectedDeviceId = null;
 			_diagnostic = "HID scan failed: " + ex.Message;
-			RaiseDevicesChangedLocked();
-			return;
+			return new HidDevicesChangedEventArgs(_devices, _diagnostic);
 		}
 
 		_devices = _descriptors.Select(ToInfo).ToArray();
@@ -272,7 +323,7 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 			StartSelectedReaderLocked();
 		}
 
-		RaiseDevicesChangedLocked();
+		return new HidDevicesChangedEventArgs(_devices, _diagnostic);
 	}
 
 	private void StartSelectedReaderLocked()
@@ -307,18 +358,17 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 		}
 
 		cancellation.Cancel();
-		try
+		if (task == null)
 		{
-			task?.Wait(TimeSpan.FromSeconds(1));
-		}
-		catch (AggregateException)
-		{
-		}
-		catch (OperationCanceledException)
-		{
+			cancellation.Dispose();
+			return;
 		}
 
-		cancellation.Dispose();
+		_ = task.ContinueWith(
+			_ => cancellation.Dispose(),
+			CancellationToken.None,
+			TaskContinuationOptions.ExecuteSynchronously,
+			TaskScheduler.Default);
 	}
 
 	private async Task ReadLoopAsync(HidDeviceDescriptor device, IControllerMapper mapper, CancellationToken cancellationToken)
@@ -356,9 +406,6 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 					CopperControllerSnapshotBuilder.Disconnected(device, DateTimeOffset.UtcNow, mapper.MappingInfo, diagnostic)));
 		}
 	}
-
-	private void RaiseDevicesChangedLocked()
-		=> DevicesChanged?.Invoke(this, new HidDevicesChangedEventArgs(_devices, _diagnostic));
 
 	private static bool IsRecoverableHidException(Exception ex)
 		=> ex is IOException or InvalidOperationException or TimeoutException or UnauthorizedAccessException or NotSupportedException;

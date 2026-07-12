@@ -17,7 +17,7 @@ internal sealed record HidDeviceDescriptor(
 	bool ReportsUseId,
 	string? Diagnostic);
 
-internal interface IHidDeviceProvider
+internal interface IHidDeviceProvider : IDisposable
 {
 	event EventHandler? Changed;
 

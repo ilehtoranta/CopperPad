@@ -10,7 +10,7 @@
     <Title>CopperPad Apple GameController Provider</Title>
     <Authors>Ilkka Lehtoranta</Authors>
     <Description>Apple GameController provider for CopperPad. The iOS target is enabled with EnableIOSProviderBuild=true on a Mac with the iOS workload installed.</Description>
-    <PackageVersion>1.0.0</PackageVersion>
+    <PackageVersion>2.0.0</PackageVersion>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ilehtoranta/CopperMod</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ilehtoranta/CopperMod.git</RepositoryUrl>

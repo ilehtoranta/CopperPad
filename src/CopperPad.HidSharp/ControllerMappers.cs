@@ -200,7 +200,8 @@ internal sealed class ProfileControllerMapper(ControllerProfile profile) : ICont
 	}
 
 	private static bool ReadButtonSource(ControllerBindingSource source, byte[] report, int length)
-		=> source.Kind switch
+	{
+		var pressed = source.Kind switch
 		{
 			ControllerBindingSourceKind.ReportBit => source.Bit is >= 0 and < 8 && ReadBitSource(source, report),
 			ControllerBindingSourceKind.Hat => source.HatValue.HasValue && MatchesHatDirection(report[source.Offset] & 0x0F, source.HatValue.Value),
@@ -208,17 +209,21 @@ internal sealed class ProfileControllerMapper(ControllerProfile profile) : ICont
 			ControllerBindingSourceKind.ReportInt16LittleEndian => source.Offset + 1 < length && BitConverter.ToInt16(report, source.Offset) != 0,
 			_ => false
 		};
+		return source.Invert ? !pressed : pressed;
+	}
 
 	private static bool ReadBitSource(ControllerBindingSource source, byte[] report)
-	{
-		var isSet = (report[source.Offset] & (1 << source.Bit)) != 0;
-		return source.Invert ? !isSet : isSet;
-	}
+		=> (report[source.Offset] & (1 << source.Bit)) != 0;
 
 	private static bool MatchesHatDirection(int actual, int expected)
 	{
 		var actualDirections = InputNormalization.HatToDirections(actual);
 		var expectedDirections = InputNormalization.HatToDirections(expected);
+		if (!expectedDirections.Up && !expectedDirections.Down && !expectedDirections.Left && !expectedDirections.Right)
+		{
+			return !actualDirections.Up && !actualDirections.Down && !actualDirections.Left && !actualDirections.Right;
+		}
+
 		return (!expectedDirections.Up || actualDirections.Up) &&
 			(!expectedDirections.Down || actualDirections.Down) &&
 			(!expectedDirections.Left || actualDirections.Left) &&

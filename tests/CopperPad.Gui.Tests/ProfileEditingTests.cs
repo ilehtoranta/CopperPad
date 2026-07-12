@@ -520,6 +520,53 @@ public sealed class ProfileEditingTests
 		}
 	}
 
+	[Fact]
+	public void HidRuntimeDataDefensivelyCopiesBuffers()
+	{
+		var descriptor = new byte[] { 1, 2, 3 };
+		var device = new HidDeviceInfo("id", "Pad", 1, 2, ControllerTransport.Usb, 3, descriptor, true, false, null);
+		var report = new byte[] { 4, 5, 6 };
+		var args = new ControllerRawReportReceivedEventArgs(device, report, report.Length, DateTimeOffset.UtcNow);
+
+		descriptor[0] = 9;
+		report[0] = 9;
+
+		Assert.Equal(new byte[] { 1, 2, 3 }, device.ReportDescriptor.ToArray());
+		Assert.Equal(new byte[] { 4, 5, 6 }, args.Report.ToArray());
+	}
+
+	[Fact]
+	public async Task FileProfileStore_InvalidSavePreservesExistingDocumentAndCleansTemporaryFile()
+	{
+		var directory = Path.Combine(Path.GetTempPath(), "CopperPad.Gui.Tests", Guid.NewGuid().ToString("N"));
+		var path = Path.Combine(directory, "profiles.json");
+		var store = new FileControllerProfileStore(path);
+		try
+		{
+			await store.SaveAsync(new ControllerProfileSet
+			{
+				Profiles = [new ControllerProfile { Name = "valid" }]
+			});
+			var original = await File.ReadAllTextAsync(path);
+			var invalid = new ControllerProfileSet
+			{
+				Profiles = [new ControllerProfile { Name = "invalid", Bindings = null! }]
+			};
+
+			await Assert.ThrowsAsync<System.Text.Json.JsonException>(() => store.SaveAsync(invalid).AsTask());
+
+			Assert.Equal(original, await File.ReadAllTextAsync(path));
+			Assert.Empty(Directory.GetFiles(directory, "*.tmp"));
+		}
+		finally
+		{
+			if (Directory.Exists(directory))
+			{
+				Directory.Delete(directory, recursive: true);
+			}
+		}
+	}
+
 	private static HidDeviceInfo Device(string name, int vendorId, int productId, bool isGameControllerUsage)
 		=> new(
 			$"hid://{vendorId:X4}/{productId:X4}/{name}",
@@ -528,7 +575,7 @@ public sealed class ProfileEditingTests
 			productId,
 			ControllerTransport.Usb,
 			8,
-			[],
+			Array.Empty<byte>(),
 			isGameControllerUsage,
 			false,
 			null);

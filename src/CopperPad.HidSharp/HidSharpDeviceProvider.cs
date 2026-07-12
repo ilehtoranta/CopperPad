@@ -11,11 +11,14 @@ namespace CopperPad;
 internal sealed class HidSharpDeviceProvider : IHidDeviceProvider
 {
 	private readonly DeviceList _deviceList;
+	private readonly EventHandler<DeviceListChangedEventArgs> _changedHandler;
+	private bool _disposed;
 
 	public HidSharpDeviceProvider()
 	{
 		_deviceList = DeviceList.Local;
-		_deviceList.Changed += (_, _) => Changed?.Invoke(this, EventArgs.Empty);
+		_changedHandler = (_, _) => Changed?.Invoke(this, EventArgs.Empty);
+		_deviceList.Changed += _changedHandler;
 	}
 
 	public event EventHandler? Changed;
@@ -41,6 +44,17 @@ internal sealed class HidSharpDeviceProvider : IHidDeviceProvider
 		}
 
 		return new HidSharpInputStream(hidDevice.Open(), device.MaxInputReportLength, readTimeout);
+	}
+
+	public void Dispose()
+	{
+		if (_disposed)
+		{
+			return;
+		}
+
+		_disposed = true;
+		_deviceList.Changed -= _changedHandler;
 	}
 
 	private static HidDeviceDescriptor CreateDescriptor(HidDevice device)

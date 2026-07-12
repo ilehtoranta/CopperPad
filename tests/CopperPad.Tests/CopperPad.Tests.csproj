@@ -30,6 +30,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\CopperPad\CopperPad.csproj" />
     <ProjectReference Include="..\..\src\CopperPad.HidSharp\CopperPad.HidSharp.csproj" />
+	<ProjectReference Include="..\..\src\CopperPad.GameController\CopperPad.GameController.csproj" />
   </ItemGroup>
 
 </Project>

@@ -35,8 +35,32 @@ internal sealed class FileControllerProfileStore(string path) : IControllerProfi
 			Directory.CreateDirectory(directory);
 		}
 
-		await using var stream = File.Create(Path);
-		await JsonControllerProfileSerializer.SaveAsync(stream, profiles, cancellationToken).ConfigureAwait(false);
+		var temporaryPath = Path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+		try
+		{
+			await using (var stream = new FileStream(
+				temporaryPath,
+				FileMode.CreateNew,
+				FileAccess.Write,
+				FileShare.None,
+				bufferSize: 4096,
+				FileOptions.Asynchronous | FileOptions.WriteThrough))
+			{
+				await JsonControllerProfileSerializer.SaveAsync(stream, profiles, cancellationToken).ConfigureAwait(false);
+				await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+				stream.Flush(flushToDisk: true);
+			}
+
+			cancellationToken.ThrowIfCancellationRequested();
+			File.Move(temporaryPath, Path, overwrite: true);
+		}
+		finally
+		{
+			if (File.Exists(temporaryPath))
+			{
+				File.Delete(temporaryPath);
+			}
+		}
 	}
 }
 
@@ -495,6 +519,18 @@ internal static class ProfileEditor
 		if (source.Kind == ControllerBindingSourceKind.Hat && !source.HatValue.HasValue)
 		{
 			issues.Add(new ProfileValidationIssue($"{binding.Target} hat source needs a hat value."));
+		}
+		else if (source.Kind == ControllerBindingSourceKind.Hat && source.HatValue is < 0 or > 15)
+		{
+			issues.Add(new ProfileValidationIssue($"{binding.Target} hat source must use value 0-15."));
+		}
+
+		if (binding.Axis is { } axis &&
+			(axis.Maximum <= axis.Minimum || axis.Center is { } center && (center < axis.Minimum || center > axis.Maximum) ||
+			 !double.IsFinite(axis.Deadzone) || axis.Deadzone is < 0 or > 0.95 ||
+			 !double.IsFinite(axis.Saturation) || axis.Saturation is < 0.01 or > 1))
+		{
+			issues.Add(new ProfileValidationIssue($"{binding.Target} calibration is invalid."));
 		}
 	}
 

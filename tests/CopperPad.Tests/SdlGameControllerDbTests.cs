@@ -33,6 +33,17 @@ public sealed class SdlGameControllerDbTests
 	}
 
 	[Fact]
+	public void Parser_AcceptsBundledTrailingAxisInversion()
+	{
+		var mapping = SdlControllerMapping.TryParse(
+			"030000006d0400000bc2000000000000,Logitech WingMan Action Pad,lefttrigger:a5~,righttrigger:a2~,righty:a3~,platform:Windows,");
+
+		Assert.NotNull(mapping);
+		Assert.Equal(3, mapping.Bindings.Count);
+		Assert.All(mapping.Bindings, binding => Assert.True(binding.Source.Invert));
+	}
+
+	[Fact]
 	public void IndexByVidPid_GroupsMappingsByHardwareIdentity()
 	{
 		var mappings = SdlGameControllerDatabase.Parse(
@@ -100,6 +111,50 @@ public sealed class SdlGameControllerDbTests
 		Assert.True(state.IsPressed(ControllerElement.Y));
 		Assert.InRange(state.GetAxis(ControllerElement.RightStickX), 0.99, 1.0);
 		Assert.InRange(state.GetAxis(ControllerElement.RightStickY), 0.99, 1.0);
+	}
+
+	[Fact]
+	public void Mapping_CombinesButtonHalfAxesFromBundledN64Mapping()
+	{
+		var mapping = SdlControllerMapping.TryParse(
+			"03000000c82d00000290000000000000,8BitDo N64,+rightx:b9,-rightx:b4,+righty:b3,-righty:b8,platform:Windows,")!;
+		var positive = new SdlInputSnapshot([], new Dictionary<int, bool> { [9] = true }, [], null);
+		var negative = new SdlInputSnapshot([], new Dictionary<int, bool> { [4] = true }, [], null);
+
+		var right = mapping.Map(ControllerMapperTests.Device(0x2DC8, 0x9000, "8BitDo N64"), DateTimeOffset.UtcNow, positive);
+		var left = mapping.Map(ControllerMapperTests.Device(0x2DC8, 0x9000, "8BitDo N64"), DateTimeOffset.UtcNow, negative);
+
+		Assert.Equal(1, right.GetAxis(ControllerElement.RightStickX), precision: 3);
+		Assert.Equal(-1, left.GetAxis(ControllerElement.RightStickX), precision: 3);
+	}
+
+	[Fact]
+	public void Mapping_CombinesHatHalfAxesFromBundledJoyConMapping()
+	{
+		var mapping = SdlControllerMapping.TryParse(
+			"030000007e0500000620000000000000,Joy-Con (L),+leftx:h0.2,-leftx:h0.8,+lefty:h0.4,-lefty:h0.1,platform:Windows,")!;
+		var rightHat = new SdlInputSnapshot([], new Dictionary<int, bool>(), [2], null);
+		var leftHat = new SdlInputSnapshot([], new Dictionary<int, bool>(), [8], null);
+
+		var right = mapping.Map(ControllerMapperTests.Device(0x057E, 0x2006, "Joy-Con (L)"), DateTimeOffset.UtcNow, rightHat);
+		var left = mapping.Map(ControllerMapperTests.Device(0x057E, 0x2006, "Joy-Con (L)"), DateTimeOffset.UtcNow, leftHat);
+
+		Assert.Equal(1, right.GetAxis(ControllerElement.LeftStickX), precision: 3);
+		Assert.Equal(-1, left.GetAxis(ControllerElement.LeftStickX), precision: 3);
+	}
+
+	[Fact]
+	public void Mapping_InvertsBundledTriggerAxis()
+	{
+		var mapping = SdlControllerMapping.TryParse(
+			"030000004c0500006802000000000000,PS3 Controller,lefttrigger:a3~,platform:Windows,")!;
+		var released = new SdlInputSnapshot(
+			[new SdlAxisValue(0, 0, 255), new SdlAxisValue(0, 0, 255), new SdlAxisValue(0, 0, 255), new SdlAxisValue(255, 0, 255)],
+			new Dictionary<int, bool>(), [], null);
+
+		var state = mapping.Map(ControllerMapperTests.Device(0x054C, 0x0268, "PS3 Controller"), DateTimeOffset.UtcNow, released);
+
+		Assert.Equal(0, state.GetAxis(ControllerElement.LeftTrigger), precision: 3);
 	}
 
 	[Fact]

@@ -4,6 +4,7 @@
  */
 
 using System.Collections.Concurrent;
+using System.Collections.Immutable;
 
 namespace CopperPad;
 
@@ -141,57 +142,136 @@ public readonly record struct ControllerElementValue(ControllerElementValueKind 
 /// <summary>
 /// Describes a discovered controller and the profile support currently known for it.
 /// </summary>
-/// <param name="Id">Stable provider-specific controller identifier.</param>
-/// <param name="DisplayName">Human-readable controller name.</param>
-/// <param name="VendorId">USB/HID vendor identifier, or zero when unavailable.</param>
-/// <param name="ProductId">USB/HID product identifier, or zero when unavailable.</param>
-/// <param name="Transport">Best-known controller transport.</param>
-/// <param name="IsConnected">Whether the controller is currently connected.</param>
-/// <param name="SupportedProfiles">Profiles supported by the current mapping/provider.</param>
-/// <param name="MappingSource">Source of the active mapping.</param>
-/// <param name="MappingName">Human-readable name of the active mapping, when available.</param>
-/// <param name="Diagnostic">Provider diagnostic message, when available.</param>
-public sealed record CopperControllerInfo(
-	string Id,
-	string DisplayName,
-	int VendorId,
-	int ProductId,
-	ControllerTransport Transport,
-	bool IsConnected,
-	IReadOnlySet<ControllerProfileKind> SupportedProfiles,
-	ControllerMappingSource MappingSource,
-	string? MappingName,
-	string? Diagnostic);
+public sealed record CopperControllerInfo
+{
+	/// <summary>Creates immutable controller metadata.</summary>
+	/// <param name="id">Stable provider-specific controller identifier.</param>
+	/// <param name="displayName">Human-readable controller name.</param>
+	/// <param name="vendorId">USB/HID vendor identifier.</param>
+	/// <param name="productId">USB/HID product identifier.</param>
+	/// <param name="transport">Best-known controller transport.</param>
+	/// <param name="isConnected">Whether the controller is connected.</param>
+	/// <param name="supportedProfiles">Profiles supported by the controller.</param>
+	/// <param name="mappingSource">Source of the active mapping.</param>
+	/// <param name="mappingName">Name of the active mapping.</param>
+	/// <param name="diagnostic">Provider diagnostic message.</param>
+	public CopperControllerInfo(
+		string id,
+		string displayName,
+		int vendorId,
+		int productId,
+		ControllerTransport transport,
+		bool isConnected,
+		IEnumerable<ControllerProfileKind> supportedProfiles,
+		ControllerMappingSource mappingSource,
+		string? mappingName,
+		string? diagnostic)
+	{
+		Id = id;
+		DisplayName = displayName;
+		VendorId = vendorId;
+		ProductId = productId;
+		Transport = transport;
+		IsConnected = isConnected;
+		SupportedProfiles = supportedProfiles.ToImmutableHashSet();
+		MappingSource = mappingSource;
+		MappingName = mappingName;
+		Diagnostic = diagnostic;
+	}
+
+	/// <summary>Gets the stable provider-specific identifier.</summary>
+	public string Id { get; init; }
+	/// <summary>Gets the human-readable controller name.</summary>
+	public string DisplayName { get; init; }
+	/// <summary>Gets the USB/HID vendor identifier.</summary>
+	public int VendorId { get; init; }
+	/// <summary>Gets the USB/HID product identifier.</summary>
+	public int ProductId { get; init; }
+	/// <summary>Gets the best-known transport.</summary>
+	public ControllerTransport Transport { get; init; }
+	/// <summary>Gets whether the controller is connected.</summary>
+	public bool IsConnected { get; init; }
+	/// <summary>Gets the immutable set of supported profiles.</summary>
+	public ImmutableHashSet<ControllerProfileKind> SupportedProfiles { get; }
+	/// <summary>Gets the source of the active mapping.</summary>
+	public ControllerMappingSource MappingSource { get; init; }
+	/// <summary>Gets the active mapping name.</summary>
+	public string? MappingName { get; init; }
+	/// <summary>Gets the provider diagnostic message.</summary>
+	public string? Diagnostic { get; init; }
+}
 
 /// <summary>
 /// Immutable snapshot of a controller at a point in time.
 /// </summary>
-/// <param name="ControllerId">Stable provider-specific controller identifier.</param>
-/// <param name="Timestamp">Timestamp when the snapshot was produced.</param>
-/// <param name="IsConnected">Whether the controller was connected when the snapshot was produced.</param>
-/// <param name="DisplayName">Human-readable controller name.</param>
-/// <param name="VendorId">USB/HID vendor identifier, or zero when unavailable.</param>
-/// <param name="ProductId">USB/HID product identifier, or zero when unavailable.</param>
-/// <param name="Transport">Best-known controller transport.</param>
-/// <param name="Elements">Normalized element values keyed by <see cref="ControllerElement"/>.</param>
-/// <param name="SupportedProfiles">Profiles supported by the snapshot.</param>
-/// <param name="MappingSource">Source of the active mapping.</param>
-/// <param name="MappingName">Human-readable name of the active mapping, when available.</param>
-/// <param name="Diagnostic">Provider diagnostic message, when available.</param>
-public sealed record CopperControllerSnapshot(
-	string ControllerId,
-	DateTimeOffset Timestamp,
-	bool IsConnected,
-	string DisplayName,
-	int VendorId,
-	int ProductId,
-	ControllerTransport Transport,
-	IReadOnlyDictionary<ControllerElement, ControllerElementValue> Elements,
-	IReadOnlySet<ControllerProfileKind> SupportedProfiles,
-	ControllerMappingSource MappingSource,
-	string? MappingName,
-	string? Diagnostic)
+public sealed record CopperControllerSnapshot
 {
+	/// <summary>Creates an immutable controller snapshot.</summary>
+	/// <param name="controllerId">Stable provider-specific controller identifier.</param>
+	/// <param name="timestamp">Timestamp when the snapshot was produced.</param>
+	/// <param name="isConnected">Whether the controller was connected.</param>
+	/// <param name="displayName">Human-readable controller name.</param>
+	/// <param name="vendorId">USB/HID vendor identifier.</param>
+	/// <param name="productId">USB/HID product identifier.</param>
+	/// <param name="transport">Best-known controller transport.</param>
+	/// <param name="elements">Normalized element values.</param>
+	/// <param name="supportedProfiles">Profiles supported by the snapshot.</param>
+	/// <param name="mappingSource">Source of the active mapping.</param>
+	/// <param name="mappingName">Name of the active mapping.</param>
+	/// <param name="diagnostic">Provider diagnostic message.</param>
+	public CopperControllerSnapshot(
+		string controllerId,
+		DateTimeOffset timestamp,
+		bool isConnected,
+		string displayName,
+		int vendorId,
+		int productId,
+		ControllerTransport transport,
+		IEnumerable<KeyValuePair<ControllerElement, ControllerElementValue>> elements,
+		IEnumerable<ControllerProfileKind> supportedProfiles,
+		ControllerMappingSource mappingSource,
+		string? mappingName,
+		string? diagnostic)
+	{
+		ControllerId = controllerId;
+		Timestamp = timestamp;
+		IsConnected = isConnected;
+		DisplayName = displayName;
+		VendorId = vendorId;
+		ProductId = productId;
+		Transport = transport;
+		Elements = elements.ToImmutableDictionary();
+		SupportedProfiles = supportedProfiles.ToImmutableHashSet();
+		MappingSource = mappingSource;
+		MappingName = mappingName;
+		Diagnostic = diagnostic;
+	}
+
+	/// <summary>Gets the controller identifier.</summary>
+	public string ControllerId { get; init; }
+	/// <summary>Gets the snapshot timestamp.</summary>
+	public DateTimeOffset Timestamp { get; init; }
+	/// <summary>Gets whether the controller was connected.</summary>
+	public bool IsConnected { get; init; }
+	/// <summary>Gets the human-readable controller name.</summary>
+	public string DisplayName { get; init; }
+	/// <summary>Gets the USB/HID vendor identifier.</summary>
+	public int VendorId { get; init; }
+	/// <summary>Gets the USB/HID product identifier.</summary>
+	public int ProductId { get; init; }
+	/// <summary>Gets the best-known controller transport.</summary>
+	public ControllerTransport Transport { get; init; }
+	/// <summary>Gets the immutable normalized element values.</summary>
+	public ImmutableDictionary<ControllerElement, ControllerElementValue> Elements { get; }
+	/// <summary>Gets the immutable supported-profile set.</summary>
+	public ImmutableHashSet<ControllerProfileKind> SupportedProfiles { get; }
+	/// <summary>Gets the mapping source.</summary>
+	public ControllerMappingSource MappingSource { get; init; }
+	/// <summary>Gets the mapping name.</summary>
+	public string? MappingName { get; init; }
+	/// <summary>Gets the provider diagnostic message.</summary>
+	public string? Diagnostic { get; init; }
+
 	/// <summary>
 	/// Gets whether a button element is pressed.
 	/// </summary>
@@ -361,25 +441,25 @@ public sealed class CopperElementChangedEventArgs(
 /// <param name="currentProfiles">Currently supported profiles.</param>
 public sealed class CopperProfileChangedEventArgs(
 	CopperController controller,
-	IReadOnlySet<ControllerProfileKind> previousProfiles,
-	IReadOnlySet<ControllerProfileKind> currentProfiles) : EventArgs
+	IEnumerable<ControllerProfileKind> previousProfiles,
+	IEnumerable<ControllerProfileKind> currentProfiles) : EventArgs
 {
 	/// <summary>Gets the controller whose profiles changed.</summary>
 	public CopperController Controller { get; } = controller;
 	/// <summary>Gets the previously supported profiles.</summary>
-	public IReadOnlySet<ControllerProfileKind> PreviousProfiles { get; } = previousProfiles;
+	public ImmutableHashSet<ControllerProfileKind> PreviousProfiles { get; } = previousProfiles.ToImmutableHashSet();
 	/// <summary>Gets the currently supported profiles.</summary>
-	public IReadOnlySet<ControllerProfileKind> CurrentProfiles { get; } = currentProfiles;
+	public ImmutableHashSet<ControllerProfileKind> CurrentProfiles { get; } = currentProfiles.ToImmutableHashSet();
 }
 
 /// <summary>
 /// Event data for controller list changes.
 /// </summary>
 /// <param name="controllers">Current controller list.</param>
-public sealed class CopperControllersChangedEventArgs(IReadOnlyList<CopperControllerInfo> controllers) : EventArgs
+public sealed class CopperControllersChangedEventArgs(IEnumerable<CopperControllerInfo> controllers) : EventArgs
 {
 	/// <summary>Gets the current controller list.</summary>
-	public IReadOnlyList<CopperControllerInfo> Controllers { get; } = controllers;
+	public ImmutableArray<CopperControllerInfo> Controllers { get; } = controllers.ToImmutableArray();
 }
 
 /// <summary>
@@ -463,15 +543,23 @@ public sealed class CopperController
 			ProfileChanged?.Invoke(this, new CopperProfileChangedEventArgs(this, previous.SupportedProfiles, snapshot.SupportedProfiles));
 		}
 
-		foreach (var pair in snapshot.Elements)
+		foreach (var element in previous.Elements.Keys.Union(snapshot.Elements.Keys))
 		{
-			previous.Elements.TryGetValue(pair.Key, out var oldValue);
-			if (!oldValue.Equals(pair.Value))
+			previous.Elements.TryGetValue(element, out var oldValue);
+			var currentValue = snapshot.Elements.TryGetValue(element, out var value)
+				? value
+				: NeutralValue(oldValue.Kind);
+			if (!oldValue.Equals(currentValue))
 			{
-				ElementChanged?.Invoke(this, new CopperElementChangedEventArgs(this, pair.Key, oldValue, pair.Value));
+				ElementChanged?.Invoke(this, new CopperElementChangedEventArgs(this, element, oldValue, currentValue));
 			}
 		}
 	}
+
+	private static ControllerElementValue NeutralValue(ControllerElementValueKind kind)
+		=> kind == ControllerElementValueKind.Axis
+			? ControllerElementValue.Axis(0)
+			: ControllerElementValue.Button(false);
 
 	private static CopperControllerSnapshot CreateDisconnectedSnapshot(CopperControllerInfo info)
 		=> new(
@@ -583,7 +671,10 @@ public sealed class CopperControllerHost : IDisposable
 		var present = infos.Select(info => info.Id).ToHashSet(StringComparer.Ordinal);
 		foreach (var stale in _controllers.Keys.Where(id => !present.Contains(id)).ToArray())
 		{
-			_controllers.TryRemove(stale, out _);
+			if (_controllers.TryRemove(stale, out var controller))
+			{
+				controller.UpdateSnapshot(CreateDisconnectedSnapshot(controller.Info));
+			}
 		}
 
 		foreach (var info in infos)
@@ -598,6 +689,21 @@ public sealed class CopperControllerHost : IDisposable
 				});
 		}
 	}
+
+	private static CopperControllerSnapshot CreateDisconnectedSnapshot(CopperControllerInfo info)
+		=> new(
+			info.Id,
+			DateTimeOffset.UtcNow,
+			false,
+			info.DisplayName,
+			info.VendorId,
+			info.ProductId,
+			info.Transport,
+			Array.Empty<KeyValuePair<ControllerElement, ControllerElementValue>>(),
+			info.SupportedProfiles,
+			info.MappingSource,
+			info.MappingName,
+			info.Diagnostic);
 
 	private void ThrowIfDisposed()
 	{

@@ -12,6 +12,8 @@ Mapping precedence is:
 
 The bundled SDL_GameControllerDB snapshot is third-party mapping data under the zlib license. See the package `THIRD-PARTY-NOTICES.md` and `ThirdParty/SDL_GameControllerDB/LICENSE`.
 
+In version 2, diagnostics report descriptors and raw input reports are immutable `ReadOnlyMemory<byte>` values. Reader sessions automatically retry transient HID open/read failures until stopped or the device disappears.
+
 ## Quick example
 
 ```csharp

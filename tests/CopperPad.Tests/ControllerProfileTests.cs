@@ -102,4 +102,14 @@ public sealed class ControllerProfileTests
 		Assert.Equal(0x0006, profile.ProductId);
 		Assert.Equal(ControllerElement.A, Assert.Single(profile.Bindings).Target);
 	}
+
+	[Theory]
+	[InlineData("{ \"schemaVersion\": 3, \"profiles\": [] }")]
+	[InlineData("{ \"schemaVersion\": 2, \"profiles\": null }")]
+	[InlineData("{ \"schemaVersion\": 2, \"profiles\": [{ \"name\": \"\", \"bindings\": [] }] }")]
+	[InlineData("{ \"schemaVersion\": 2, \"profiles\": [{ \"name\": \"bad\", \"bindings\": [{ \"target\": \"a\", \"source\": { \"kind\": \"reportBit\", \"offset\": 0, \"bit\": 9 } }] }] }")]
+	public void JsonSerializer_RejectsStructurallyInvalidProfiles(string json)
+	{
+		Assert.Throws<System.Text.Json.JsonException>(() => JsonControllerProfileSerializer.Deserialize(json));
+	}
 }

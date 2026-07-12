@@ -83,7 +83,7 @@ public sealed class ControllerDiagnosticsTests
 		var mapped = await WaitAsync(state.Task);
 
 		Assert.Equal(device.Id, rawReport.Device.Id);
-		Assert.Equal([0x01, 255], rawReport.Report);
+		Assert.Equal([0x01, 255], rawReport.Report.ToArray());
 		Assert.True(mapped.IsPressed(ControllerElement.A));
 		Assert.InRange(mapped.GetAxis(ControllerElement.LeftTrigger), 0.99, 1.0);
 	}
@@ -131,6 +131,10 @@ public sealed class ControllerDiagnosticsTests
 
 		public void RaiseChanged()
 			=> Changed?.Invoke(this, EventArgs.Empty);
+
+		public void Dispose()
+		{
+		}
 	}
 
 	private sealed class FakeHidInputStream(int maxInputReportLength) : IHidInputStream
