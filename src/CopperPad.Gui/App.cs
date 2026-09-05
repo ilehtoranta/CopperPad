@@ -16,6 +16,7 @@ internal sealed class App : Application
 	{
 		RequestedThemeVariant = ThemeVariant.Dark;
 		Styles.Add(new FluentTheme());
+		CopperTheme.Install(this);
 	}
 
 	public override void OnFrameworkInitializationCompleted()

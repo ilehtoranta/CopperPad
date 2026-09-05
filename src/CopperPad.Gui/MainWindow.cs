@@ -10,7 +10,7 @@ using CopperPad;
 
 namespace CopperPad.Gui;
 
-internal sealed class MainWindow : Window, IDisposable
+internal sealed partial class MainWindow : Window, IDisposable
 {
 	private static readonly TimeSpan RawReportUiInterval = TimeSpan.FromMilliseconds(50);
 	private static readonly TimeSpan ReportTextUpdateInterval = TimeSpan.FromSeconds(1);
@@ -30,17 +30,14 @@ internal sealed class MainWindow : Window, IDisposable
 	];
 
 	private readonly FileControllerProfileStore _profileStore = new(CopperPadProfilePaths.GetDefaultProfilePath());
-	private readonly ControllerDiagnosticsHost _host;
+	private readonly IControllerGuiService _host;
 	private readonly ListBox _deviceList = new();
 	private readonly TextBlock _statusText = TextBlock();
 	private readonly TextBlock _deviceFilterText = TextBlock();
 	private readonly CheckBox _showAllDevicesCheck = new() { Content = "Show all HID" };
-	private readonly StackPanel _controllerSummary = new() { Spacing = 12, Margin = new Thickness(8) };
-	private readonly TextBlock _controllerSummaryText = TextBlock();
-	private readonly StackPanel _controllerActions = new() { Orientation = Orientation.Horizontal, Spacing = 8 };
-	private readonly Button _testProfileButton = new() { Content = "View / Test Controls", IsEnabled = false };
-	private readonly Button _createProfileButton = new() { Content = "Create Profile", IsEnabled = false };
-	private readonly Button _editProfileButton = new() { Content = "Edit Profile", IsEnabled = false };
+
+
+
 	private readonly TabControl _tabs = new();
 	private readonly TextBlock _stateText = TextBlock();
 	private readonly TextBlock _rawHexText = MonospaceTextBlock();
@@ -63,14 +60,14 @@ internal sealed class MainWindow : Window, IDisposable
 	private readonly NumericUpDown _bitBox = NumberBox(0, 7);
 	private readonly NumericUpDown _hatBox = NumberBox(0, 15);
 	private readonly CheckBox _sourceInvertCheck = new() { Content = "Active low / inverted" };
-	private readonly ListBox _bindingsList = new() { MinHeight = 140, MaxHeight = 260 };
+
 	private readonly Button _startGuidedMappingButton = new() { Content = "Start Guided Mapping" };
 	private readonly Button _skipGuidedMappingButton = new() { Content = "Skip", IsEnabled = false };
 	private readonly Button _stopGuidedMappingButton = new() { Content = "Stop", IsEnabled = false };
 	private readonly Button _useSuggestionButton = new() { Content = "Use Change", IsEnabled = false };
 	private readonly Button _ignoreSuggestionButton = new() { Content = "Ignore Change", IsEnabled = false };
 	private readonly Button _saveProfileButton = new() { Content = "Save Profile" };
-	private readonly Button _newOverrideButton = new() { Content = "New Override", IsEnabled = false };
+
 	private readonly ComboBox _calibrationTargetBox = new() { MinWidth = 170 };
 	private readonly CheckBox _invertCheck = new() { Content = "Invert" };
 	private readonly Slider _deadzoneSlider = new() { Minimum = 0, Maximum = 0.95, Value = 0.1, Width = 180 };
@@ -107,371 +104,28 @@ internal sealed class MainWindow : Window, IDisposable
 	private bool _calibrationActive;
 	private bool _disposed;
 
-	public MainWindow()
+	public MainWindow() : this(new ControllerGuiService()) { }
+
+	internal MainWindow(IControllerGuiService host, FileControllerProfileStore? store = null)
 	{
-		_host = new ControllerDiagnosticsHost(new HidSharpControllerProviderOptions());
+		_host = host;
+		if (store != null) _profileStore = store;
 		Title = "CopperPad";
 		Width = 1180;
 		Height = 760;
-		MinWidth = 980;
-		MinHeight = 640;
+		MinWidth = 900;
+		MinHeight = 600;
 		Content = BuildContent();
+		UpdateEditorState();
+		UpdateSelectedDeviceDetails();
+		Closing += OnWindowClosing;
+		KeyDown += OnEditorKeyDown;
 
 		_host.DevicesChanged += (_, args) => PostUi("Device refresh failed", () => OnDevicesChanged(args));
 		_host.RawReportReceived += (_, args) => QueueRawReport(args);
 		_host.SnapshotChanged += (_, args) => PostUi("Controller snapshot update failed", () => OnSnapshotChanged(args.Snapshot));
 		Opened += async (_, _) => await TryRunUiActionAsync("Startup failed", InitializeAsync).ConfigureAwait(true);
 		Closed += (_, _) => Dispose();
-	}
-
-	private Control BuildContent()
-	{
-		var root = new DockPanel { LastChildFill = true };
-		DockPanel.SetDock(_statusText, Dock.Bottom);
-		_statusText.Margin = new Thickness(12, 6);
-		root.Children.Add(_statusText);
-
-		var toolbar = new StackPanel
-		{
-			Orientation = Orientation.Horizontal,
-			Spacing = 8,
-			Margin = new Thickness(12, 10, 12, 8)
-		};
-		DockPanel.SetDock(toolbar, Dock.Top);
-		toolbar.Children.Add(new TextBlock
-		{
-			Text = "CopperPad",
-			FontSize = 20,
-			FontWeight = FontWeight.SemiBold,
-			VerticalAlignment = VerticalAlignment.Center,
-			Margin = new Thickness(0, 0, 16, 0)
-		});
-		toolbar.Children.Add(Button("Refresh", (_, _) => RefreshDevices()));
-		toolbar.Children.Add(_showAllDevicesCheck);
-		toolbar.Children.Add(_saveProfileButton);
-		toolbar.Children.Add(_newOverrideButton);
-		toolbar.Children.Add(Button("Import", async (_, _) => await ImportProfilesAsync().ConfigureAwait(true)));
-		toolbar.Children.Add(Button("Export", async (_, _) => await ExportProfilesAsync().ConfigureAwait(true)));
-		_saveProfileButton.IsVisible = false;
-		_newOverrideButton.IsVisible = false;
-		_saveProfileButton.Click += async (_, _) => await SaveDraftProfileAsync().ConfigureAwait(true);
-		_newOverrideButton.Click += (_, _) => TryRunUiAction("New override failed", CreateNewOverrideDraft);
-		_showAllDevicesCheck.PropertyChanged += (_, args) =>
-		{
-			if (args.Property == ToggleButton.IsCheckedProperty)
-			{
-				ApplyDeviceFilter();
-			}
-		};
-		root.Children.Add(toolbar);
-
-		var layout = new Grid
-		{
-			ColumnDefinitions = new ColumnDefinitions("300,*"),
-			RowDefinitions = new RowDefinitions("*"),
-			Margin = new Thickness(12, 0, 12, 8)
-		};
-		layout.Children.Add(BuildDevicePane());
-		var workspace = BuildWorkspace();
-		Grid.SetColumn(workspace, 1);
-		layout.Children.Add(workspace);
-		root.Children.Add(layout);
-		return root;
-	}
-
-	private Control BuildDevicePane()
-	{
-		var panel = new Grid
-		{
-			RowDefinitions = new RowDefinitions("Auto,Auto,*"),
-			ColumnDefinitions = new ColumnDefinitions("*"),
-			Margin = new Thickness(0, 0, 12, 0)
-		};
-		panel.Children.Add(new TextBlock
-		{
-			Text = "Devices",
-			FontSize = 16,
-			FontWeight = FontWeight.SemiBold,
-			Margin = new Thickness(0, 0, 0, 8)
-		});
-		_deviceFilterText.Margin = new Thickness(0, 0, 0, 8);
-		Grid.SetRow(_deviceFilterText, 1);
-		panel.Children.Add(_deviceFilterText);
-		_deviceList.SelectionChanged += (_, _) =>
-		{
-			if (_deviceList.SelectedItem is DeviceListItem item)
-			{
-				SelectDevice(item.Device);
-			}
-		};
-		Grid.SetRow(_deviceList, 2);
-		panel.Children.Add(_deviceList);
-		return panel;
-	}
-
-	private Control BuildWorkspace()
-	{
-		_controllerActions.Children.Add(_testProfileButton);
-		_controllerActions.Children.Add(_createProfileButton);
-		_controllerActions.Children.Add(_editProfileButton);
-		_testProfileButton.Click += (_, _) => TryRunUiAction("Open test failed", OpenTestWorkspace);
-		_createProfileButton.Click += (_, _) => TryRunUiAction("Create profile failed", OpenCreateProfileWorkspace);
-		_editProfileButton.Click += (_, _) => TryRunUiAction("Edit profile failed", OpenEditProfileWorkspace);
-		_controllerSummary.Children.Add(_controllerSummaryText);
-		_controllerSummary.Children.Add(_controllerActions);
-
-		_tabs.ItemsSource = new object[]
-		{
-			new TabItem { Header = "Test", Content = BuildTestTab() },
-			new TabItem { Header = "Map", Content = BuildMapTab() },
-			new TabItem { Header = "Calibrate", Content = BuildCalibrationTab() },
-			new TabItem { Header = "Reports", Content = BuildReportsTab() }
-		};
-		_tabs.IsVisible = false;
-
-		var root = new Grid
-		{
-			RowDefinitions = new RowDefinitions("*"),
-			ColumnDefinitions = new ColumnDefinitions("*")
-		};
-		root.Children.Add(_controllerSummary);
-		root.Children.Add(_tabs);
-		return root;
-	}
-
-	private Control BuildTabs()
-		=> new TabControl
-		{
-			ItemsSource = new object[]
-			{
-				new TabItem { Header = "Test", Content = BuildTestTab() },
-				new TabItem { Header = "Map", Content = BuildMapTab() },
-				new TabItem { Header = "Calibrate", Content = BuildCalibrationTab() },
-				new TabItem { Header = "Reports", Content = BuildReportsTab() }
-			}
-		};
-
-	private Control BuildTestTab()
-	{
-		var root = new Grid
-		{
-			ColumnDefinitions = new ColumnDefinitions("*,*"),
-			RowDefinitions = new RowDefinitions("Auto,Auto,*"),
-			Margin = new Thickness(8)
-		};
-		var triggerPanel = new Grid
-		{
-			ColumnDefinitions = new ColumnDefinitions("*,*"),
-			Margin = new Thickness(0, 0, 0, 16)
-		};
-		triggerPanel.Children.Add(LabeledControl("Left trigger", _leftTrigger));
-		var rightTrigger = LabeledControl("Right trigger", _rightTrigger);
-		Grid.SetColumn(rightTrigger, 1);
-		triggerPanel.Children.Add(rightTrigger);
-		Grid.SetColumnSpan(triggerPanel, 2);
-		root.Children.Add(triggerPanel);
-
-		var leftStickPanel = LabeledControl("Left stick", _leftStick);
-		Grid.SetRow(leftStickPanel, 1);
-		root.Children.Add(leftStickPanel);
-		var rightStickPanel = LabeledControl("Right stick", _rightStick);
-		Grid.SetColumn(rightStickPanel, 1);
-		Grid.SetRow(rightStickPanel, 1);
-		root.Children.Add(rightStickPanel);
-
-		var buttons = new WrapPanel
-		{
-			Margin = new Thickness(0, 18, 0, 0),
-			HorizontalAlignment = HorizontalAlignment.Stretch
-		};
-		foreach (var control in new[]
-		{
-			ControllerElement.DPadUp,
-			ControllerElement.DPadDown,
-			ControllerElement.DPadLeft,
-			ControllerElement.DPadRight,
-			ControllerElement.A,
-			ControllerElement.B,
-			ControllerElement.X,
-			ControllerElement.Y,
-			ControllerElement.LeftShoulder,
-			ControllerElement.RightShoulder,
-			ControllerElement.Select,
-			ControllerElement.Start,
-			ControllerElement.Menu,
-			ControllerElement.LeftStickButton,
-			ControllerElement.RightStickButton
-		})
-		{
-			buttons.Children.Add(CreateIndicator(control));
-		}
-
-		Grid.SetRow(buttons, 2);
-		Grid.SetColumnSpan(buttons, 2);
-		root.Children.Add(buttons);
-		_stateText.Margin = new Thickness(0, 12, 0, 0);
-		buttons.Children.Add(_stateText);
-		return root;
-	}
-
-	private Control BuildMapTab()
-	{
-		_targetBox.ItemsSource = MappingTargetItem.All;
-		_targetBox.SelectedIndex = 0;
-		_targetBox.SelectionChanged += (_, _) => PopulateFieldsFromSelectedTarget();
-		_sourceKindBox.ItemsSource = Enum.GetValues<ControllerBindingSourceKind>();
-		_sourceKindBox.SelectedItem = ControllerBindingSourceKind.ReportBit;
-		_sourceKindBox.SelectionChanged += (_, _) => UpdateSourceFieldAvailability();
-		_bindingsList.SelectionChanged += (_, _) =>
-		{
-			if (_bindingsList.SelectedItem is BindingListItem item)
-			{
-				SetBindingFields(item.Binding);
-			}
-		};
-		_useSuggestionButton.Click += (_, _) =>
-		{
-			if (_suggestedSource != null)
-			{
-				SetSourceFields(_suggestedSource);
-				SetCaptureStatus("Suggestion copied to fields. Click Add / Update to store the binding.", ExplicitCaptureStatusHold);
-			}
-		};
-		_ignoreSuggestionButton.Click += (_, _) => IgnoreSuggestedSource();
-		_startGuidedMappingButton.Click += (_, _) => StartGuidedMapping();
-		_skipGuidedMappingButton.Click += (_, _) => SkipGuidedTarget();
-		_stopGuidedMappingButton.Click += (_, _) => StopGuidedMapping("Guided mapping stopped.");
-
-		var guidedPanel = new StackPanel
-		{
-			Spacing = 8,
-			Margin = new Thickness(0, 0, 0, 12)
-		};
-		_guidedPromptText.FontSize = 18;
-		_guidedPromptText.FontWeight = FontWeight.SemiBold;
-		_guidedPromptText.Margin = new Thickness(10);
-		_guidedPromptText.Text = "Guided mapping asks for one control at a time and locks the detected input automatically.";
-		guidedPanel.Children.Add(new Border
-		{
-			Background = new SolidColorBrush(Color.FromRgb(36, 48, 54)),
-			BorderBrush = new SolidColorBrush(Color.FromRgb(84, 150, 168)),
-			BorderThickness = new Thickness(1),
-			CornerRadius = new CornerRadius(4),
-			Child = _guidedPromptText
-		});
-		var guidedActions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-		guidedActions.Children.Add(_startGuidedMappingButton);
-		guidedActions.Children.Add(_skipGuidedMappingButton);
-		guidedActions.Children.Add(_stopGuidedMappingButton);
-		guidedPanel.Children.Add(guidedActions);
-
-		var editor = new Grid
-		{
-			ColumnDefinitions = new ColumnDefinitions("Auto,220,Auto,220"),
-			RowDefinitions = new RowDefinitions("Auto,Auto,Auto,Auto,Auto"),
-			Margin = new Thickness(0, 0, 0, 12),
-			ColumnSpacing = 12,
-			RowSpacing = 8
-		};
-		AddFormRow(editor, 0, "Target", _targetBox, "Kind", _sourceKindBox);
-		AddFormRow(editor, 1, "Offset", _offsetBox, "Bit", _bitBox);
-		AddFormRow(editor, 2, "Hat", _hatBox, "", new StackPanel());
-		AddFormRow(editor, 3, "Options", _sourceInvertCheck, "", new StackPanel());
-		var actions = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-		actions.Children.Add(Button("Capture Baseline", (_, _) => CaptureBaseline()));
-		actions.Children.Add(_useSuggestionButton);
-		actions.Children.Add(_ignoreSuggestionButton);
-		actions.Children.Add(Button("Add / Update", (_, _) => AddOrUpdateBinding()));
-		actions.Children.Add(Button("Remove", (_, _) => RemoveSelectedBinding()));
-		actions.Children.Add(Button("Clear Bindings", (_, _) => ClearBindings()));
-		Grid.SetRow(actions, 4);
-		Grid.SetColumnSpan(actions, 4);
-		editor.Children.Add(actions);
-
-		var root = new Grid
-		{
-			RowDefinitions = new RowDefinitions("Auto,Auto,*,Auto,Auto"),
-			Margin = new Thickness(8)
-		};
-		root.Children.Add(guidedPanel);
-		Grid.SetRow(editor, 1);
-		root.Children.Add(editor);
-		var bindingsScroll = new ScrollViewer
-		{
-			Content = _bindingsList,
-			VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-			HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled
-		};
-		Grid.SetRow(bindingsScroll, 2);
-		root.Children.Add(bindingsScroll);
-		_captureStatusText.Margin = new Thickness(0, 10, 0, 0);
-		Grid.SetRow(_captureStatusText, 3);
-		root.Children.Add(_captureStatusText);
-		_validationText.Margin = new Thickness(0, 8, 0, 0);
-		Grid.SetRow(_validationText, 4);
-		root.Children.Add(_validationText);
-		UpdateSourceFieldAvailability();
-		return root;
-	}
-
-	private Control BuildCalibrationTab()
-	{
-		_calibrationTargetBox.ItemsSource = AxisTargets;
-		_calibrationTargetBox.SelectedItem = ControllerElement.LeftStickX;
-		_calibrationTargetBox.SelectionChanged += (_, _) => LoadCalibrationFromTarget();
-		_deadzoneSlider.PropertyChanged += (_, args) =>
-		{
-			if (args.Property == RangeBase.ValueProperty)
-			{
-				UpdateCalibrationPreview();
-			}
-		};
-		_saturationSlider.PropertyChanged += (_, args) =>
-		{
-			if (args.Property == RangeBase.ValueProperty)
-			{
-				UpdateCalibrationPreview();
-			}
-		};
-
-		var root = new StackPanel
-		{
-			Spacing = 12,
-			Margin = new Thickness(8)
-		};
-		root.Children.Add(LabeledControl("Axis / trigger", _calibrationTargetBox));
-		var buttons = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-		buttons.Children.Add(Button("Start Range", (_, _) => StartCalibrationCapture()));
-		buttons.Children.Add(Button("Stop Range", (_, _) => StopCalibrationCapture()));
-		buttons.Children.Add(Button("Set Center", (_, _) => CaptureCalibrationCenter()));
-		buttons.Children.Add(Button("Apply", (_, _) => ApplyCalibration()));
-		root.Children.Add(buttons);
-		root.Children.Add(_invertCheck);
-		root.Children.Add(LabeledControl("Deadzone", _deadzoneSlider));
-		root.Children.Add(LabeledControl("Saturation", _saturationSlider));
-		root.Children.Add(_calibrationStatusText);
-		root.Children.Add(_calibrationPreviewText);
-		return root;
-	}
-
-	private Control BuildReportsTab()
-	{
-		var root = new Grid
-		{
-			RowDefinitions = new RowDefinitions("Auto,Auto,*,*"),
-			Margin = new Thickness(8),
-			RowSpacing = 8
-		};
-		root.Children.Add(_reportRateText);
-		Grid.SetRow(_changedBytesText, 1);
-		root.Children.Add(_changedBytesText);
-		var rawScroll = new ScrollViewer { Content = _rawHexText };
-		Grid.SetRow(rawScroll, 2);
-		root.Children.Add(rawScroll);
-		var descriptorScroll = new ScrollViewer { Content = _descriptorText };
-		Grid.SetRow(descriptorScroll, 3);
-		root.Children.Add(descriptorScroll);
-		return root;
 	}
 
 	private async Task InitializeAsync()
@@ -507,6 +161,7 @@ internal sealed class MainWindow : Window, IDisposable
 	private void OnDevicesChanged(HidDevicesChangedEventArgs args)
 	{
 		_allDevices = args.Devices;
+		foreach (var session in _sessions.Values) session.Connected = args.Devices.Any(d => d.Id == session.Device.Id);
 		if (!string.IsNullOrWhiteSpace(args.Diagnostic))
 		{
 			SetStatus(args.Diagnostic);
@@ -555,7 +210,15 @@ internal sealed class MainWindow : Window, IDisposable
 
 	private void SelectDevice(HidDeviceInfo? device)
 	{
+		if (_selectedDevice?.Id == device?.Id && device != null) { _selectedDevice = device; if (_session != null) { _session.Device = device; _session.Connected = true; } UpdateSelectedDeviceDetails(); return; }
+		if (_session != null) _session.SelectedPage = _tabs.SelectedIndex;
+		_session = null;
 		_selectedDevice = device;
+		_rangeReview = false;
+		_calibrationActive = false;
+		_previewVersion++;
+		_host.UpdateProfiles(_profiles);
+		ResetLiveControls();
 		_lastReport = null;
 		_previousReport = null;
 		_baselineReport = null;
@@ -582,22 +245,26 @@ internal sealed class MainWindow : Window, IDisposable
 		if (device == null)
 		{
 			_descriptorText.Text = "";
-			_controllerSummaryText.Text = "Select a controller.";
+
 			_draftProfile = null;
 			_saveProfileButton.Content = "Save Profile";
 			_saveProfileButton.IsVisible = false;
-			_newOverrideButton.IsEnabled = false;
-			_newOverrideButton.IsVisible = false;
-			_testProfileButton.IsEnabled = false;
-			_createProfileButton.IsEnabled = false;
-			_editProfileButton.IsEnabled = false;
+
+
+
 			ShowSummaryWorkspace();
-			SetStatus("No controller selected.");
+			SetStatus("No controller connected. Connect a controller to begin; unsaved sessions are retained.");
 		}
 		else
 		{
-			_draftProfile = FindSavedProfile(device) ?? ProfileEditor.CreateDefaultProfile(device, DateTimeOffset.UtcNow);
-			_newOverrideButton.IsEnabled = true;
+			if (!_sessions.TryGetValue(device.Id, out _session))
+			{
+				_session = new EditorSession(device, FindSavedProfile(device));
+				_sessions.Add(device.Id, _session);
+			}
+			_session.Connected = true;
+			_draftProfile = _session.Draft;
+
 			UpdateSelectedDeviceDetails();
 			ShowSummaryWorkspace();
 			SetStatus("Selected " + device.ProductName);
@@ -660,8 +327,8 @@ internal sealed class MainWindow : Window, IDisposable
 			_reportTimes.Dequeue();
 		}
 
-		if (_lastReportTextUpdate == DateTimeOffset.MinValue ||
-			pending.Timestamp - _lastReportTextUpdate >= ReportTextUpdateInterval)
+		if (!_diagnosticsPaused && (_lastReportTextUpdate == DateTimeOffset.MinValue ||
+			pending.Timestamp - _lastReportTextUpdate >= ReportTextUpdateInterval))
 		{
 			_lastReportTextUpdate = pending.Timestamp;
 			_rawHexText.Text = ToHexRows(_lastReport);
@@ -698,6 +365,7 @@ internal sealed class MainWindow : Window, IDisposable
 		}
 
 		ObserveCalibration(_lastReport);
+		UpdateCalibrationGraph();
 	}
 
 	private void OnSnapshotChanged(CopperControllerSnapshot state)
@@ -707,6 +375,8 @@ internal sealed class MainWindow : Window, IDisposable
 			return;
 		}
 
+		if (!state.IsConnected) { ResetLiveControls(); _deviceSubtitle.Text = "Disconnected · Reconnect your controller to continue."; return; }
+		_gamepad.SetState(state);
 		var leftX = state.GetAxis(ControllerElement.LeftStickX);
 		var leftY = state.GetAxis(ControllerElement.LeftStickY);
 		var rightX = state.GetAxis(ControllerElement.RightStickX);
@@ -734,6 +404,7 @@ internal sealed class MainWindow : Window, IDisposable
 		SetIndicator(ControllerElement.DPadRight, state.IsPressed(ControllerElement.DPadRight));
 		_stateText.Text =
 			$"LX {leftX:0.00}  LY {leftY:0.00}  RX {rightX:0.00}  RY {rightY:0.00}  LT {leftTrigger:0.00}  RT {rightTrigger:0.00}";
+		_liveNumbers.Text = _stateText.Text;
 		if (!string.IsNullOrWhiteSpace(state.Diagnostic))
 		{
 			SetStatus(state.Diagnostic);
@@ -765,7 +436,10 @@ internal sealed class MainWindow : Window, IDisposable
 		var target = GetSelectedTarget();
 		var existingAxis = _draftProfile.Bindings.FirstOrDefault(binding => binding.Target == target)?.Axis;
 		var binding = ProfileEditor.CreateBinding(target, GetSourceFromFields(), existingAxis);
-		_draftProfile = ProfileEditor.UpsertBinding(_draftProfile, binding);
+		var candidate = ProfileEditor.UpsertBinding(_draftProfile, binding);
+		var issues = ProfileEditor.ValidateProfile(candidate, _selectedDevice?.MaxInputReportLength ?? 0);
+		if (issues.Count > 0) { _validationText.Text = string.Join("\n", issues.Select(x => x.Message)); SetCaptureStatus("Assignment needs correction. See validation below.", ExplicitCaptureStatusHold); return; }
+		_draftProfile = candidate;
 		UpdateBindingList();
 		UpdateValidation();
 		LoadCalibrationFromTarget();
@@ -847,6 +521,8 @@ internal sealed class MainWindow : Window, IDisposable
 		_ignoreSuggestionButton.IsEnabled = false;
 		UpdateGuidedButtons();
 		_guidedPromptText.Text = "Guided mapping asks for one control at a time and locks the detected input automatically.";
+		_guidedPromptText.Text = message;
+		SchedulePreview();
 		SetCaptureStatus(message, ExplicitCaptureStatusHold);
 	}
 
@@ -1088,7 +764,7 @@ internal sealed class MainWindow : Window, IDisposable
 		_ignoreSuggestionButton.IsEnabled = false;
 		if (_guidedTargetIndex >= ProfileEditor.MappableTargets.Count)
 		{
-			StopGuidedMapping("Guided mapping complete. Save the profile, then test controls.");
+			StopGuidedMapping($"Mapping complete: {_draftProfile?.Bindings.Count ?? 0} assigned. Unassigned controls are optional. Review the controls below, then open Test.");
 			return;
 		}
 
@@ -1112,7 +788,9 @@ internal sealed class MainWindow : Window, IDisposable
 		_guidedCapture.Reset();
 		_guidedArmUntil = DateTimeOffset.UtcNow + GuidedMappingArmDelay;
 		UpdateGuidedButtons();
+		_guidedProgress.Text = $"Control {_guidedTargetIndex + 1} of {ProfileEditor.MappableTargets.Count} · {Friendly(ProfileEditor.MappableTargets[_guidedTargetIndex])}";
 		_guidedPromptText.Text = "Release all controls. Measuring neutral input...";
+		_guidedPromptText.BringIntoView();
 		SetCaptureStatus("Measuring neutral input before the next action.", ExplicitCaptureStatusHold);
 	}
 
@@ -1124,6 +802,8 @@ internal sealed class MainWindow : Window, IDisposable
 		}
 
 		var target = ProfileEditor.MappableTargets[_guidedTargetIndex];
+		_guidedProgress.Text = $"Control {_guidedTargetIndex + 1} of {ProfileEditor.MappableTargets.Count} · {Friendly(target)}";
+		_gamepad.Highlight = target;
 		SetSelectedTarget(target);
 		if (_guidedArming)
 		{
@@ -1151,10 +831,13 @@ internal sealed class MainWindow : Window, IDisposable
 
 	private void UpdateGuidedButtons()
 	{
+		_backGuided.IsEnabled = _guidedMappingActive && _guidedTargetIndex > 0;
+		_retryGuided.IsEnabled = _guidedMappingActive;
 		_startGuidedMappingButton.IsEnabled = !_guidedMappingActive;
 		_skipGuidedMappingButton.IsEnabled = _guidedMappingActive;
 		_skipGuidedMappingButton.Content = _guidedWaitingForNeutral ? "Continue" : "Skip";
 		_stopGuidedMappingButton.IsEnabled = _guidedMappingActive;
+		UpdateEditorState();
 	}
 
 	private bool IsGuidedSourceAlreadyBound(ControllerElement target, ControllerBindingSource source)
@@ -1218,6 +901,7 @@ internal sealed class MainWindow : Window, IDisposable
 			return;
 		}
 
+		StopGuidedMapping("Bindings cleared. Undo restores the previous assignments.");
 		_draftProfile = _draftProfile with { Bindings = [] };
 		_guidedIgnoredSourceKeys.Clear();
 		_guidedCapture.Reset();
@@ -1230,111 +914,11 @@ internal sealed class MainWindow : Window, IDisposable
 		SetCaptureStatus("Cleared all bindings. Start guided mapping again.", ExplicitCaptureStatusHold);
 	}
 
-	private void CreateNewOverrideDraft()
-	{
-		if (_selectedDevice == null)
-		{
-			SetStatus("No controller selected.");
-			return;
-		}
-
-		_draftProfile = ProfileEditor.CreateDefaultProfile(_selectedDevice, DateTimeOffset.UtcNow);
-		UpdateBindingList();
-		UpdateValidation();
-		LoadCalibrationFromTarget();
-		UpdateSelectedDeviceDetails();
-		SetStatus("New override draft for " + _selectedDevice.ProductName);
-	}
-
-	private void OpenTestWorkspace()
-	{
-		if (_selectedDevice == null)
-		{
-			SetStatus("No controller selected.");
-			return;
-		}
-
-		if (FindSavedProfile(_selectedDevice) == null)
-		{
-			SetStatus("Create a profile before testing controls.");
-			return;
-		}
-
-		ShowTabbedWorkspace(WorkspaceMode.Test, tabIndex: 0);
-		SetStatus("Testing " + _selectedDevice.ProductName);
-	}
-
-	private void OpenCreateProfileWorkspace()
-	{
-		if (_selectedDevice == null)
-		{
-			SetStatus("No controller selected.");
-			return;
-		}
-
-		_draftProfile = ProfileEditor.CreateDefaultProfile(_selectedDevice, DateTimeOffset.UtcNow);
-		UpdateBindingList();
-		UpdateValidation();
-		LoadCalibrationFromTarget();
-		UpdateSelectedDeviceDetails();
-		ShowTabbedWorkspace(WorkspaceMode.EditProfile, tabIndex: 1);
-		SetStatus("Creating profile for " + _selectedDevice.ProductName);
-	}
-
-	private void OpenEditProfileWorkspace()
-	{
-		if (_selectedDevice == null)
-		{
-			SetStatus("No controller selected.");
-			return;
-		}
-
-		_draftProfile = FindSavedProfile(_selectedDevice) ?? ProfileEditor.CreateDefaultProfile(_selectedDevice, DateTimeOffset.UtcNow);
-		UpdateBindingList();
-		UpdateValidation();
-		LoadCalibrationFromTarget();
-		UpdateSelectedDeviceDetails();
-		ShowTabbedWorkspace(WorkspaceMode.EditProfile, tabIndex: 1);
-		SetStatus("Editing profile for " + _selectedDevice.ProductName);
-	}
-
 	private async Task SaveDraftProfileAsync()
-	{
-		if (_draftProfile == null || _selectedDevice == null)
-		{
-			SetStatus("No profile to save.");
-			return;
-		}
-
-		var issues = ProfileEditor.ValidateProfile(_draftProfile, _selectedDevice.MaxInputReportLength);
-		if (issues.Count > 0)
-		{
-			SetStatus("Profile has validation errors.");
-			UpdateValidation();
-			return;
-		}
-
-		var now = DateTimeOffset.UtcNow;
-		var profile = _draftProfile with
-		{
-			CreatedAt = _draftProfile.CreatedAt ?? now,
-			UpdatedAt = now
-		};
-		var candidateProfiles = ProfileEditor.MergeProfile(_profiles, profile);
-		try
-		{
-			await _profileStore.SaveAsync(candidateProfiles).ConfigureAwait(true);
-			_profiles = candidateProfiles;
-			_draftProfile = profile;
-			_host.UpdateProfiles(_profiles);
-			UpdateSelectedDeviceDetails();
-			SetStatus("Saved " + profile.Name);
-		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
-		{
-			SetStatus("Profile save failed: " + ex.Message);
-		}
-	}
+    {
+        if (_guidedMappingActive || _calibrationActive || _rangeReview) { SetStatus("Finish or cancel the current capture before saving."); return; }
+        if (_session != null) await SaveSessionAsync(_session);
+    }
 
 	private async Task ImportProfilesAsync()
 	{
@@ -1357,17 +941,9 @@ internal sealed class MainWindow : Window, IDisposable
 		{
 			await using var stream = await file.OpenReadAsync().ConfigureAwait(true);
 			var importedProfiles = await JsonControllerProfileSerializer.LoadAsync(stream).ConfigureAwait(true);
-			await _profileStore.SaveAsync(importedProfiles).ConfigureAwait(true);
-			_profiles = importedProfiles;
-			_host.UpdateProfiles(_profiles);
-			if (_selectedDevice != null)
-			{
-				SelectDevice(_selectedDevice);
-			}
-
-			SetStatus("Imported profiles from " + file.Name);
+			await ImportDocumentAsync(importedProfiles);
 		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException)
 		{
 			SetStatus("Import failed: " + ex.Message);
 		}
@@ -1377,7 +953,7 @@ internal sealed class MainWindow : Window, IDisposable
 	{
 		var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
 		{
-			Title = "Export CopperPad profiles",
+			Title = "Export saved CopperPad profiles",
 			SuggestedFileName = "copperpad-profiles.json",
 			DefaultExtension = "json",
 			FileTypeChoices =
@@ -1474,7 +1050,9 @@ internal sealed class MainWindow : Window, IDisposable
 			return;
 		}
 
-		_calibrationCapture = AxisCalibrationCapture.From(binding.Axis);
+		var rest = _rangeReview ? _calibrationCapture?.Center : null;
+		_calibrationCapture = new AxisCalibrationCapture();
+		if (rest.HasValue) _calibrationCapture.CaptureCenter(rest.Value);
 		_calibrationActive = true;
 		if (_lastReport != null)
 		{
@@ -1511,7 +1089,7 @@ internal sealed class MainWindow : Window, IDisposable
 			return;
 		}
 
-		var target = _calibrationTargetBox.SelectedItem is ControllerElement control ? control : ControllerElement.LeftStickX;
+		var target = CalibrationTarget;
 		var binding = GetCalibrationBinding();
 		if (binding == null)
 		{
@@ -1531,6 +1109,8 @@ internal sealed class MainWindow : Window, IDisposable
 
 	private void LoadCalibrationFromTarget()
 	{
+		_loadingCalibration = true;
+		_invertCheck.IsVisible = !ProfileEditor.IsTriggerTarget(CalibrationTarget);
 		var binding = GetCalibrationBinding();
 		var calibration = binding?.Axis;
 		_invertCheck.IsChecked = calibration?.Invert ?? false;
@@ -1538,7 +1118,11 @@ internal sealed class MainWindow : Window, IDisposable
 		_saturationSlider.Value = calibration?.Saturation ?? 1.0;
 		_calibrationCapture = AxisCalibrationCapture.From(calibration);
 		_calibrationActive = false;
+		_deadzoneNumber.Value = (decimal)_deadzoneSlider.Value;
+		_saturationNumber.Value = (decimal)_saturationSlider.Value;
+		_loadingCalibration = false;
 		UpdateCalibrationPreview();
+		UpdateCalibrationGraph();
 	}
 
 	private void ObserveCalibration(byte[] report)
@@ -1566,7 +1150,7 @@ internal sealed class MainWindow : Window, IDisposable
 			return null;
 		}
 
-		var target = _calibrationTargetBox.SelectedItem is ControllerElement control ? control : ControllerElement.LeftStickX;
+		var target = CalibrationTarget;
 		return _draftProfile.Bindings.FirstOrDefault(binding => binding.Target == target);
 	}
 
@@ -1585,10 +1169,11 @@ internal sealed class MainWindow : Window, IDisposable
 
 	private void UpdateBindingList()
 	{
-		_bindingsList.ItemsSource = _draftProfile?.Bindings
-			.OrderBy(binding => binding.Target)
-			.Select(binding => new BindingListItem(binding))
-			.ToArray() ?? [];
+		if (_session != null && _draftProfile != null) _session.Edit(_draftProfile);
+		RenderMappingRows();
+		UpdateEditorState();
+		SchedulePreview();
+
 	}
 
 	private void UpdateValidation()
@@ -1604,47 +1189,27 @@ internal sealed class MainWindow : Window, IDisposable
 		_validationText.Text = issues.Count == 0
 			? $"Profile: {_draftProfile.Name}   Bindings: {_draftProfile.Bindings.Count}"
 			: string.Join("\n", issues.Select(issue => issue.Message));
-		_saveProfileButton.IsEnabled = issues.Count == 0;
+		UpdateEditorState();
 	}
 
 	private void UpdateSelectedDeviceDetails()
 	{
-		if (_selectedDevice == null)
-		{
-			return;
-		}
-
-		var mapping = GetMappingInfo(_selectedDevice);
-		var mappingText = MappingDisplay.Format(mapping);
-		var savedProfile = FindSavedProfile(_selectedDevice);
-		var profileText = ProfileDocumentDisplay.Format(_profileStore.Path, savedProfile != null, _draftProfile);
-		_controllerSummaryText.Text =
-			$"{_selectedDevice.ProductName}\n{mappingText}\n{profileText}\nVID/PID: 0x{_selectedDevice.VendorId:X4}/0x{_selectedDevice.ProductId:X4}\nTransport: {_selectedDevice.Transport}\nInput report: {_selectedDevice.MaxInputReportLength} bytes\nReport IDs: {(_selectedDevice.ReportsUseId ? "yes" : "no")}\nUsage: {(_selectedDevice.IsGameControllerUsage ? "game controller" : "generic HID")}\n{_selectedDevice.Diagnostic}";
-		_descriptorText.Text = mappingText + "\n" + profileText + "\n\nDescriptor\n" + ToHexRows(_selectedDevice.ReportDescriptor.ToArray());
-		_saveProfileButton.Content = "Save Profile";
-		_testProfileButton.IsEnabled = savedProfile != null;
-		_createProfileButton.IsEnabled = true;
-		_editProfileButton.IsEnabled = savedProfile != null;
-		_createProfileButton.Content = savedProfile == null ? "Create Profile" : "Create New Profile";
+        var device = _selectedDevice;
+        var mapping = device == null ? null : GetMappingInfo(device);
+        if (_session?.IsDirty != true) _previewText.Text = device == null ? "Connect a controller to see live input" : MappingDisplay.Format(mapping).Contains("Fallback", StringComparison.OrdinalIgnoreCase) ? "BUILT-IN OUTPUT · Generic fallback — unverified" : "SAVED / BUILT-IN OUTPUT";
+        _deviceTitle.Text = device?.ProductName ?? "Connect your controller";
+        _deviceSubtitle.Text = device == null ? "No controller connected · Your unsaved work stays in this session" : $"Connected · {device.Transport} · {MappingDisplay.Format(mapping)}";
+        _setupButton.IsVisible = device != null && (mapping == null || mapping.ToString().Contains("Diagnostic", StringComparison.OrdinalIgnoreCase) || mapping.ToString().Contains("Fallback", StringComparison.OrdinalIgnoreCase));
+        _descriptorText.Text = device == null ? "No device selected" : $"{MappingDisplay.Format(mapping)}\nProfile document: {_profileStore.Path}\nVID/PID: {device.VendorId:X4}:{device.ProductId:X4}\nReport length: {device.MaxInputReportLength} bytes\n{device.Diagnostic}\n\nDescriptor\n{ToHexRows(device.ReportDescriptor.ToArray())}";
+        UpdateEditorState();
 	}
 
 	private void ShowSummaryWorkspace()
-	{
-		_controllerSummary.IsVisible = true;
-		_tabs.IsVisible = false;
-		_saveProfileButton.IsVisible = false;
-		_newOverrideButton.IsVisible = false;
-	}
-
-	private void ShowTabbedWorkspace(WorkspaceMode mode, int tabIndex)
-	{
-		_controllerSummary.IsVisible = false;
-		_tabs.IsVisible = true;
-		_tabs.SelectedIndex = tabIndex;
-		_saveProfileButton.IsVisible = mode == WorkspaceMode.EditProfile;
-		_newOverrideButton.IsVisible = mode == WorkspaceMode.EditProfile;
-		_newOverrideButton.IsEnabled = _selectedDevice != null;
-	}
+    {
+        _tabs.IsVisible = true;
+        _tabs.SelectedIndex = _session?.SelectedPage ?? 0;
+        UpdateSelectedDeviceDetails();
+    }
 
 	private ControllerProfile? FindSavedProfile(HidDeviceInfo device)
 		=> _profiles.FindMatch(new CopperControllerInfo(
@@ -1808,6 +1373,7 @@ internal sealed class MainWindow : Window, IDisposable
 		=> new()
 		{
 			Minimum = min,
+			Value = min,
 			Maximum = max,
 			Increment = 1,
 			Width = 130,
@@ -1816,28 +1382,11 @@ internal sealed class MainWindow : Window, IDisposable
 
 	private static Control LabeledControl(string label, Control control)
 	{
+		Avalonia.Automation.AutomationProperties.SetName(control, label);
 		var panel = new StackPanel { Spacing = 4, Margin = new Thickness(0, 0, 12, 8) };
 		panel.Children.Add(new TextBlock { Text = label, FontWeight = FontWeight.SemiBold });
 		panel.Children.Add(control);
 		return panel;
-	}
-
-	private static void AddFormRow(Grid grid, int row, string leftLabel, Control leftControl, string rightLabel, Control rightControl)
-	{
-		AddCell(grid, leftLabel, row, 0);
-		AddCell(grid, leftControl, row, 1);
-		AddCell(grid, rightLabel, row, 2);
-		AddCell(grid, rightControl, row, 3);
-	}
-
-	private static void AddCell(Grid grid, string label, int row, int column)
-		=> AddCell(grid, new TextBlock { Text = label, VerticalAlignment = VerticalAlignment.Center }, row, column);
-
-	private static void AddCell(Grid grid, Control control, int row, int column)
-	{
-		Grid.SetRow(control, row);
-		Grid.SetColumn(control, column);
-		grid.Children.Add(control);
 	}
 
 	private static int DecimalToInt(decimal? value)
@@ -1885,51 +1434,5 @@ internal sealed class MainWindow : Window, IDisposable
 			=> $"{Device.ProductName}  0x{Device.VendorId:X4}:0x{Device.ProductId:X4}";
 	}
 
-	private sealed class BindingListItem(ControllerBinding binding)
-	{
-		public ControllerBinding Binding { get; } = binding;
 
-		public override string ToString()
-			=> $"{new MappingTargetItem(Binding.Target)}: {ReportAnalyzer.FormatSource(Binding.Source)}";
-	}
-
-	private enum WorkspaceMode
-	{
-		Test,
-		EditProfile
-	}
-}
-
-internal sealed class StickView : Control
-{
-	private double _x;
-	private double _y;
-
-	public StickView()
-	{
-		Width = 220;
-		Height = 220;
-		MinWidth = 180;
-		MinHeight = 180;
-	}
-
-	public void SetPosition(double x, double y)
-	{
-		_x = Math.Clamp(x, -1, 1);
-		_y = Math.Clamp(y, -1, 1);
-		InvalidateVisual();
-	}
-
-	public override void Render(DrawingContext context)
-	{
-		base.Render(context);
-		var size = Math.Min(Bounds.Width, Bounds.Height);
-		var radius = Math.Max(10, (size / 2) - 12);
-		var center = new Point(Bounds.Width / 2, Bounds.Height / 2);
-		context.DrawEllipse(Brushes.Transparent, new Pen(Brushes.Gray, 1), center, radius, radius);
-		context.DrawLine(new Pen(Brushes.DimGray, 1), new Point(center.X - radius, center.Y), new Point(center.X + radius, center.Y));
-		context.DrawLine(new Pen(Brushes.DimGray, 1), new Point(center.X, center.Y - radius), new Point(center.X, center.Y + radius));
-		var dot = new Point(center.X + (_x * radius), center.Y - (_y * radius));
-		context.DrawEllipse(Brushes.LightGreen, new Pen(Brushes.SeaGreen, 2), dot, 8, 8);
-	}
 }
