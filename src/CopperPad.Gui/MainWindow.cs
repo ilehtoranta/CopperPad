@@ -71,7 +71,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 	private readonly ComboBox _calibrationTargetBox = new() { MinWidth = 170 };
 	private readonly CheckBox _invertCheck = new() { Content = "Invert" };
 	private readonly Slider _deadzoneSlider = new() { Minimum = 0, Maximum = 0.95, Value = 0.1, Width = 180 };
-	private readonly Slider _saturationSlider = new() { Minimum = 0.1, Maximum = 1, Value = 1, Width = 180 };
+	private readonly Slider _saturationSlider = new() { Minimum = 0.01, Maximum = 1, Value = 1, Width = 180 };
 	private readonly object _rawReportGate = new();
 	private ControllerProfileSet _profiles = ControllerProfileSet.Empty;
 	private IReadOnlyList<HidDeviceInfo> _allDevices = Array.Empty<HidDeviceInfo>();
@@ -94,6 +94,9 @@ internal sealed partial class MainWindow : Window, IDisposable
 	private DateTimeOffset _captureStatusHoldUntil = DateTimeOffset.MinValue;
 	private bool _rawReportDispatchScheduled;
 	private bool _guidedMappingActive;
+	private bool _guidedSingleTarget;
+	private bool _deviceConnected;
+    private bool _updatingDeviceList;
 	private bool _guidedArming;
 	private bool _guidedWaitingForNeutral;
 	private bool _guidedReadyPromptShown;
@@ -134,12 +137,14 @@ internal sealed partial class MainWindow : Window, IDisposable
 		{
 			_profiles = await _profileStore.LoadAsync().ConfigureAwait(true);
 			_host.UpdateProfiles(_profiles);
-			SetStatus($"Profiles: {_profileStore.Path}");
+			ClearUiError("load");
+			SetStatus("");
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException)
 		{
 			_profiles = ControllerProfileSet.Empty;
 			SetStatus("Profile load failed: " + ex.Message);
+			ShowUiError("load", null, "Saved profiles could not be loaded", "Check the profile document in Diagnostics or import a valid document.", ex.Message + "\nProfile document: " + _profileStore.Path, "Open Diagnostics", () => { _tabs.SelectedIndex = 3; return Task.CompletedTask; });
 		}
 
 		StartHost();
@@ -151,76 +156,94 @@ internal sealed partial class MainWindow : Window, IDisposable
 		{
 			_host.Stop();
 			_host.Start();
+			ClearUiError("devices");
 		}
 		catch (Exception ex) when (IsRecoverableHidException(ex))
 		{
 			SetStatus("Controller refresh failed: " + ex.Message);
+			ShowDeviceFailure(ex);
 		}
 	}
 
 	private void OnDevicesChanged(HidDevicesChangedEventArgs args)
 	{
 		_allDevices = args.Devices;
-		foreach (var session in _sessions.Values) session.Connected = args.Devices.Any(d => d.Id == session.Device.Id);
+        foreach (var session in _sessions.Values)
+        {
+            var device = args.Devices.FirstOrDefault(d => d.Id == session.Device.Id);
+            session.Connected = device != null;
+            if (device != null) session.Device = device;
+        }
 		if (!string.IsNullOrWhiteSpace(args.Diagnostic))
 		{
 			SetStatus(args.Diagnostic);
+			ShowUiError("devices", null, "Device scan needs attention", args.Diagnostic, args.Diagnostic, "Refresh devices", () => { RefreshDevices(); return Task.CompletedTask; });
 		}
+		else ClearUiError("devices");
 
 		ApplyDeviceFilter();
 	}
 
 	private void ApplyDeviceFilter()
-	{
-		var selectedId = _selectedDevice?.Id;
-		var showAll = _showAllDevicesCheck.IsChecked == true;
-		var devices = showAll ? _allDevices : _allDevices.Where(DeviceDisplay.IsLikelyGameController).ToArray();
-		var items = devices.Select(device => new DeviceListItem(device)).ToArray();
-		_deviceList.ItemsSource = items;
-		var hiddenCount = _allDevices.Count - items.Length;
-		_deviceFilterText.Text = showAll
-			? $"Showing all HID devices: {items.Length}"
-			: hiddenCount == 0
-				? $"Showing controllers: {items.Length}"
-				: $"Showing controllers: {items.Length}   Hidden HID: {hiddenCount}";
-		var selected = items.FirstOrDefault(item => string.Equals(item.Device.Id, selectedId, StringComparison.Ordinal)) ??
-			items.FirstOrDefault();
-		if (selected != null)
-		{
-			_deviceList.SelectedItem = selected;
-			SelectDevice(selected.Device);
-		}
-		else
-		{
-			SelectDevice(null);
-		}
-	}
+    {
+        var selectedId = _selectedDevice?.Id;
+        var showAll = _showAllDevicesCheck.IsChecked == true;
+        var devices = showAll ? _allDevices : _allDevices.Where(DeviceDisplay.IsLikelyGameController);
+        // Editing history must remain reachable even after Undo returns an offline draft to its baseline.
+        var retained = _sessions.Values.Where(x => x.IsDirty || x.CanUndo || x.CanRedo).Select(x => x.Device);
+        var items = devices.Concat(retained).DistinctBy(x => x.Id)
+            .Select(device => new DeviceListItem(device, IsDeviceConnected(device))).ToArray();
+        var visibleIds = items.Select(x => x.Device.Id).ToHashSet(StringComparer.Ordinal);
+        var hiddenCount = _allDevices.Count(x => !visibleIds.Contains(x.Id));
+        var connectedCount = items.Count(x => x.Connected);
+        var offlineCount = items.Count(x => !x.Connected);
+        _deviceFilterText.Text = $"{connectedCount} connected" + (offlineCount > 0 ? $" · {offlineCount} offline" : "") + (hiddenCount > 0 ? $" · {hiddenCount} hidden HID" : "");
+        var selected = items.FirstOrDefault(x => x.Device.Id == selectedId) ?? items.FirstOrDefault();
+        // Replacing ItemsSource raises selection events; restore the intended selection just once.
+        _updatingDeviceList = true;
+        try { _deviceList.ItemsSource = items; _deviceList.SelectedItem = selected; }
+        finally { _updatingDeviceList = false; }
+        SelectDevice(selected?.Device);
+    }
+
+    private bool IsDeviceConnected(HidDeviceInfo device) => _allDevices.Any(x => x.Id == device.Id) &&
+        (!_sessions.TryGetValue(device.Id, out var session) || session.Connected);
 
 	private void StartHost()
 	{
 		try
 		{
 			_host.Start();
+			ClearUiError("devices");
 		}
 		catch (Exception ex) when (IsRecoverableHidException(ex))
 		{
 			SetStatus("Controller scan failed: " + ex.Message);
+			ShowDeviceFailure(ex);
 		}
 	}
 
 	private void SelectDevice(HidDeviceInfo? device)
 	{
-		if (_selectedDevice?.Id == device?.Id && device != null) { _selectedDevice = device; if (_session != null) { _session.Device = device; _session.Connected = true; } UpdateSelectedDeviceDetails(); return; }
+		var connected = device != null && IsDeviceConnected(device);
+        if (_selectedDevice?.Id == device?.Id && device != null && _session != null && connected == _deviceConnected)
+        {
+            _selectedDevice = device;
+            if (_session != null) { _session.Device = device; _session.Connected = connected; }
+            UpdateSelectedDeviceDetails();
+            return;
+        }
 		if (_session != null) _session.SelectedPage = _tabs.SelectedIndex;
 		_session = null;
 		_selectedDevice = device;
+        _deviceConnected = connected;
 		_rangeReview = false;
 		_calibrationActive = false;
 		_previewVersion++;
-		_host.UpdateProfiles(_profiles);
 		ResetLiveControls();
 		_lastReport = null;
 		_previousReport = null;
+        lock (_rawReportGate) _pendingRawReport = null;
 		_baselineReport = null;
 		_guidedReleaseBaselineReport = null;
 		_suggestedSource = null;
@@ -232,6 +255,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 		_lastCaptureStatusUpdate = DateTimeOffset.MinValue;
 		_captureStatusHoldUntil = DateTimeOffset.MinValue;
 		_guidedMappingActive = false;
+        _guidedSingleTarget = false;
 		_guidedArming = false;
 		_guidedWaitingForNeutral = false;
 		_guidedReadyPromptShown = false;
@@ -241,7 +265,8 @@ internal sealed partial class MainWindow : Window, IDisposable
 		_guidedReleaseSource = null;
 		_guidedReleaseBaselineReport = null;
 		UpdateGuidedButtons();
-		_host.SelectDevice(device?.Id);
+		_guidedPromptText.Text = device == null ? "Connect a controller to map its controls." : connected ? "Use guided setup, or remap one control below." : "Reconnect this controller to capture input. You can still edit or save its draft.";
+        _guidedPromptText.Foreground = CopperTheme.Muted;
 		if (device == null)
 		{
 			_descriptorText.Text = "";
@@ -253,7 +278,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 
 
 			ShowSummaryWorkspace();
-			SetStatus("No controller connected. Connect a controller to begin; unsaved sessions are retained.");
+			SetStatus("");
 		}
 		else
 		{
@@ -262,18 +287,22 @@ internal sealed partial class MainWindow : Window, IDisposable
 				_session = new EditorSession(device, FindSavedProfile(device));
 				_sessions.Add(device.Id, _session);
 			}
-			_session.Connected = true;
+			_session.Device = device;
+            _session.Connected = connected;
 			_draftProfile = _session.Draft;
 
 			UpdateSelectedDeviceDetails();
 			ShowSummaryWorkspace();
-			SetStatus("Selected " + device.ProductName);
+			SetStatus("");
 		}
 
 		UpdateBindingList();
 		UpdateValidation();
 		LoadCalibrationFromTarget();
 		UpdateCaptureStatus();
+        // Runtime failures must not interrupt restoring a session or its editing controls.
+        TryRunUiAction("Preview failed", () => _host.UpdateProfiles(_profiles));
+        TryRunUiAction("Controller connection failed", () => _host.SelectDevice(connected ? device?.Id : null));
 	}
 
 	private void QueueRawReport(ControllerRawReportReceivedEventArgs args)
@@ -282,6 +311,13 @@ internal sealed partial class MainWindow : Window, IDisposable
 		lock (_rawReportGate)
 		{
 			_pendingRawReport = new PendingRawReport(args.Device, args.Report.ToArray(), args.Timestamp);
+            if (_rangeCaptureSource is { } capture && capture.DeviceId == args.Device.Id && SourceFitsReport(capture.Binding.Source, _pendingRawReport.Report))
+            {
+                var raw = ReadCalibrationRaw(capture.Binding, _pendingRawReport.Report);
+                _pendingRangeMinimum = _pendingRangeMinimum.HasValue ? Math.Min(_pendingRangeMinimum.Value, raw) : raw;
+                _pendingRangeMaximum = _pendingRangeMaximum.HasValue ? Math.Max(_pendingRangeMaximum.Value, raw) : raw;
+                _pendingRangeLast = raw;
+            }
 			if (_rawReportDispatchScheduled)
 			{
 				return;
@@ -314,7 +350,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 
 	private void OnRawReport(PendingRawReport pending)
 	{
-		if (_selectedDevice == null || !string.Equals(pending.Device.Id, _selectedDevice.Id, StringComparison.Ordinal))
+		if (!_deviceConnected || _selectedDevice == null || !string.Equals(pending.Device.Id, _selectedDevice.Id, StringComparison.Ordinal))
 		{
 			return;
 		}
@@ -364,8 +400,9 @@ internal sealed partial class MainWindow : Window, IDisposable
 			UpdateCaptureStatus(force: false);
 		}
 
-		ObserveCalibration(_lastReport);
+		DrainCalibrationReports();
 		UpdateCalibrationGraph();
+        UpdateCalibrationControls();
 	}
 
 	private void OnSnapshotChanged(CopperControllerSnapshot state)
@@ -374,8 +411,34 @@ internal sealed partial class MainWindow : Window, IDisposable
 		{
 			return;
 		}
+        // Reports queued before an enumeration disconnect must not revive an offline editor.
+        if (state.IsConnected && !_allDevices.Any(x => x.Id == state.ControllerId)) return;
 
-		if (!state.IsConnected) { ResetLiveControls(); _deviceSubtitle.Text = "Disconnected · Reconnect your controller to continue."; return; }
+        var connectionChanged = _deviceConnected != state.IsConnected;
+        _deviceConnected = state.IsConnected;
+        if (_session != null) _session.Connected = state.IsConnected;
+		if (!state.IsConnected)
+        {
+            ResetLiveControls();
+            _lastReport = null;
+            lock (_rawReportGate) _pendingRawReport = null;
+            if (_guidedMappingActive) StopGuidedMapping("Controller disconnected. Completed assignments retained; reconnect to continue.");
+            else _guidedPromptText.Text = "Reconnect this controller to capture input. You can still edit or save its draft.";
+            if (_rangeReview || _calibrationActive) CancelCalibration();
+            UpdateConnectionBadge(false);
+            _liveNumbers.Text = _stateText.Text = "Controller disconnected. Reconnect to test input.";
+            UpdateCalibrationControls();
+            UpdateCalibrationGraph();
+            if (connectionChanged)
+            {
+                TryRunUiAction("Controller connection failed", () => _host.SelectDevice(null));
+                ApplyDeviceFilter();
+            }
+            if (!string.IsNullOrWhiteSpace(state.Diagnostic)) ShowInputFailure(state.ControllerId, state.Diagnostic);
+            return;
+        }
+        if (connectionChanged) ApplyDeviceFilter();
+        UpdateConnectionBadge(true);
 		_gamepad.SetState(state);
 		var leftX = state.GetAxis(ControllerElement.LeftStickX);
 		var leftY = state.GetAxis(ControllerElement.LeftStickY);
@@ -408,7 +471,9 @@ internal sealed partial class MainWindow : Window, IDisposable
 		if (!string.IsNullOrWhiteSpace(state.Diagnostic))
 		{
 			SetStatus(state.Diagnostic);
+            if (state.MappingSource != ControllerMappingSource.None) ShowInputFailure(state.ControllerId, state.Diagnostic);
 		}
+        else ClearUiError("input", state.ControllerId);
 	}
 
 	private void CaptureBaseline()
@@ -420,10 +485,12 @@ internal sealed partial class MainWindow : Window, IDisposable
 		if (_baselineReport == null)
 		{
 			SetCaptureStatus("No report received yet. Move or press the controller once, then capture baseline again.", ExplicitCaptureStatusHold);
+			ShowCaptureError("No report received. Move or press the controller once, then capture a baseline in Advanced.", true);
 			return;
 		}
 
 		SetCaptureStatus($"Baseline captured: {_baselineReport.Length} bytes. Press or move one physical control.", ExplicitCaptureStatusHold);
+		ClearUiError("capture", _selectedDevice?.Id);
 	}
 
 	private void AddOrUpdateBinding()
@@ -438,7 +505,21 @@ internal sealed partial class MainWindow : Window, IDisposable
 		var binding = ProfileEditor.CreateBinding(target, GetSourceFromFields(), existingAxis);
 		var candidate = ProfileEditor.UpsertBinding(_draftProfile, binding);
 		var issues = ProfileEditor.ValidateProfile(candidate, _selectedDevice?.MaxInputReportLength ?? 0);
-		if (issues.Count > 0) { _validationText.Text = string.Join("\n", issues.Select(x => x.Message)); SetCaptureStatus("Assignment needs correction. See validation below.", ExplicitCaptureStatusHold); return; }
+		if (issues.Count > 0)
+        {
+            _assignmentError.Text = string.Join("\n", issues.Select(x => x.Message));
+            _assignmentError.IsVisible = true;
+            var deviceId = _selectedDevice?.Id;
+            var source = binding.Source;
+            ShowUiError("assignment", deviceId, "Input was not assigned", $"{_selectedDevice?.ProductName} · {Friendly(target)}: {issues[0].Message}", _assignmentError.Text, "Fix assignment", () => {
+                NavigateToError(deviceId, 1); SetSelectedTarget(target); SetSourceFields(source);
+                _advancedEditor.IsExpanded = true; RevealErrorControl(_offsetBox); return Task.CompletedTask;
+            });
+            SetCaptureStatus("Assignment needs correction. See the error panel.", ExplicitCaptureStatusHold);
+            return;
+        }
+        _assignmentError.IsVisible = false;
+		ClearUiError("assignment", _selectedDevice?.Id);
 		_draftProfile = candidate;
 		UpdateBindingList();
 		UpdateValidation();
@@ -446,32 +527,35 @@ internal sealed partial class MainWindow : Window, IDisposable
 		SetCaptureStatus($"Added / updated {target}: {ReportAnalyzer.FormatSource(binding.Source)}", ExplicitCaptureStatusHold);
 	}
 
-	private void StartGuidedMapping()
-	{
-		if (_draftProfile == null)
-		{
-			SetCaptureStatus("Create a profile before guided mapping.", ExplicitCaptureStatusHold);
-			return;
-		}
+    private void StartGuidedMapping()
+    {
+        var firstMissing = ProfileEditor.MappableTargets.Select((target, index) => new { target, index })
+            .FirstOrDefault(item => _draftProfile?.Bindings.Any(binding => binding.Target == item.target) != true);
+        BeginGuidedMapping(firstMissing?.index ?? 0, singleTarget: false);
+    }
 
-		if (_lastReport == null)
-		{
-			SetCaptureStatus("No neutral report yet. Release the controller controls and wait for input reports.", ExplicitCaptureStatusHold);
-			return;
-		}
+    private void RemapControl(ControllerElement target)
+    {
+        var index = ProfileEditor.MappableTargets.ToList().IndexOf(target);
+        if (index >= 0) BeginGuidedMapping(index, singleTarget: true);
+    }
 
-		var firstMissing = ProfileEditor.MappableTargets
-			.Select((target, index) => new { target, index })
-			.FirstOrDefault(item => !_draftProfile.Bindings.Any(binding => binding.Target == item.target));
-		_guidedTargetIndex = firstMissing?.index ?? 0;
-		_guidedMappingActive = true;
-		_guidedIgnoredSourceKeys.Clear();
-		_suggestedSource = null;
-		_useSuggestionButton.IsEnabled = false;
-		_ignoreSuggestionButton.IsEnabled = false;
-		UpdateGuidedButtons();
-		BeginGuidedArming();
-	}
+    private void BeginGuidedMapping(int targetIndex, bool singleTarget)
+    {
+        if (_guidedMappingActive) return;
+        if (_draftProfile == null) { ShowCaptureError("Select a controller to begin mapping."); return; }
+        if (!_deviceConnected) { ShowCaptureError("Reconnect this controller before capturing input."); return; }
+        if (_lastReport == null) { ShowCaptureError("Waiting for reports. Release the controls and press a button once, then try again."); return; }
+        ClearUiError("capture", _selectedDevice?.Id);
+        _guidedPromptText.Foreground = CopperTheme.Copper;
+        _guidedSingleTarget = singleTarget;
+        _guidedTargetIndex = targetIndex;
+        _guidedMappingActive = true;
+        _guidedIgnoredSourceKeys.Clear();
+        _suggestedSource = null;
+        _useSuggestionButton.IsEnabled = _ignoreSuggestionButton.IsEnabled = false;
+        BeginGuidedArming();
+    }
 
 	private void IgnoreSuggestedSource()
 	{
@@ -496,11 +580,11 @@ internal sealed partial class MainWindow : Window, IDisposable
 			return;
 		}
 
-		if (_guidedWaitingForNeutral)
-		{
-			AdvanceGuidedTarget();
-			return;
-		}
+        if (_guidedSingleTarget && !_guidedWaitingForNeutral)
+        {
+            StopGuidedMapping("Remap skipped. Existing assignments are unchanged.");
+            return;
+        }
 
 		AdvanceGuidedTarget();
 	}
@@ -508,6 +592,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 	private void StopGuidedMapping(string message)
 	{
 		_guidedMappingActive = false;
+        _guidedSingleTarget = false;
 		_guidedArming = false;
 		_guidedWaitingForNeutral = false;
 		_guidedReadyPromptShown = false;
@@ -520,8 +605,11 @@ internal sealed partial class MainWindow : Window, IDisposable
 		_useSuggestionButton.IsEnabled = false;
 		_ignoreSuggestionButton.IsEnabled = false;
 		UpdateGuidedButtons();
-		_guidedPromptText.Text = "Guided mapping asks for one control at a time and locks the detected input automatically.";
+		_gamepad.Highlight = null;
+        _guidedProgress.Text = "";
+        RenderMappingRows();
 		_guidedPromptText.Text = message;
+        _guidedPromptText.Foreground = CopperTheme.Muted;
 		SchedulePreview();
 		SetCaptureStatus(message, ExplicitCaptureStatusHold);
 	}
@@ -755,8 +843,13 @@ internal sealed partial class MainWindow : Window, IDisposable
 	}
 
 	private void AdvanceGuidedTarget()
-	{
-		_guidedTargetIndex++;
+    {
+        if (_guidedSingleTarget)
+        {
+            StopGuidedMapping($"{Friendly(ProfileEditor.MappableTargets[_guidedTargetIndex])} assigned. Review the result in Test.");
+            return;
+        }
+        _guidedTargetIndex++;
 		_suggestedSource = null;
 		_guidedReleaseSource = null;
 		_guidedReleaseBaselineReport = null;
@@ -781,6 +874,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 
 		_baselineReport = _lastReport.ToArray();
 		_guidedArming = true;
+		_guidedReadyPromptShown = false;
 		_guidedWaitingForNeutral = false;
 		_guidedLockCheckScheduled = false;
 		_guidedReleaseSource = null;
@@ -788,8 +882,8 @@ internal sealed partial class MainWindow : Window, IDisposable
 		_guidedCapture.Reset();
 		_guidedArmUntil = DateTimeOffset.UtcNow + GuidedMappingArmDelay;
 		UpdateGuidedButtons();
-		_guidedProgress.Text = $"Control {_guidedTargetIndex + 1} of {ProfileEditor.MappableTargets.Count} · {Friendly(ProfileEditor.MappableTargets[_guidedTargetIndex])}";
-		_guidedPromptText.Text = "Release all controls. Measuring neutral input...";
+        ShowGuidedPrompt();
+        RenderMappingRows();
 		_guidedPromptText.BringIntoView();
 		SetCaptureStatus("Measuring neutral input before the next action.", ExplicitCaptureStatusHold);
 	}
@@ -802,7 +896,8 @@ internal sealed partial class MainWindow : Window, IDisposable
 		}
 
 		var target = ProfileEditor.MappableTargets[_guidedTargetIndex];
-		_guidedProgress.Text = $"Control {_guidedTargetIndex + 1} of {ProfileEditor.MappableTargets.Count} · {Friendly(target)}";
+        _guidedProgress.Text = _guidedSingleTarget ? $"Remapping {Friendly(target)}" :
+            $"Control {_guidedTargetIndex + 1} of {ProfileEditor.MappableTargets.Count} · {Friendly(target)}";
 		_gamepad.Highlight = target;
 		SetSelectedTarget(target);
 		if (_guidedArming)
@@ -813,7 +908,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 
 		if (_guidedWaitingForNeutral)
 		{
-			_guidedPromptText.Text = $"Locked {MappingTargetItem.All[_guidedTargetIndex]}. Release controls, or click Continue if the controller stays active.";
+			_guidedPromptText.Text = $"Assigned {Friendly(target)}. Release the control to finish this step, or choose Continue.";
 			SetCaptureStatus($"Locked {target}. Release controls or click Continue.", ExplicitCaptureStatusHold);
 			return;
 		}
@@ -831,7 +926,11 @@ internal sealed partial class MainWindow : Window, IDisposable
 
 	private void UpdateGuidedButtons()
 	{
-		_backGuided.IsEnabled = _guidedMappingActive && _guidedTargetIndex > 0;
+        _guidedProgress.IsVisible = _guidedMappingActive;
+		_backGuided.IsVisible = _guidedMappingActive && !_guidedSingleTarget;
+        _retryGuided.IsVisible = _stopGuidedMappingButton.IsVisible = _skipGuidedMappingButton.IsVisible = _guidedMappingActive;
+        _startGuidedMappingButton.IsVisible = !_guidedMappingActive;
+        _backGuided.IsEnabled = _guidedMappingActive && !_guidedSingleTarget && _guidedTargetIndex > 0;
 		_retryGuided.IsEnabled = _guidedMappingActive;
 		_startGuidedMappingButton.IsEnabled = !_guidedMappingActive;
 		_skipGuidedMappingButton.IsEnabled = _guidedMappingActive;
@@ -920,67 +1019,53 @@ internal sealed partial class MainWindow : Window, IDisposable
         if (_session != null) await SaveSessionAsync(_session);
     }
 
-	private async Task ImportProfilesAsync()
-	{
-		var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
-		{
-			AllowMultiple = false,
-			Title = "Import CopperPad profiles",
-			FileTypeFilter =
-			[
-				new FilePickerFileType("JSON profiles") { Patterns = ["*.json"] }
-			]
-		}).ConfigureAwait(true);
-		var file = files.FirstOrDefault();
-		if (file == null)
-		{
-			return;
-		}
+    private async Task ImportProfilesAsync()
+    {
+        try
+        {
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+            {
+                AllowMultiple = false,
+                Title = "Import CopperPad profiles",
+                FileTypeFilter = [new FilePickerFileType("JSON profiles") { Patterns = ["*.json"] }]
+            });
+            var file = files.FirstOrDefault();
+            if (file == null) return;
+            await using var stream = await file.OpenReadAsync();
+            var importedProfiles = await JsonControllerProfileSerializer.LoadAsync(stream);
+            await ImportDocumentAsync(importedProfiles);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("Import failed: " + ex.Message);
+            if (!_errors.TryGetValue(("import", null), out var error) || error.Details != ex.Message) ShowImportFailure(ex);
+        }
+    }
 
-		try
-		{
-			await using var stream = await file.OpenReadAsync().ConfigureAwait(true);
-			var importedProfiles = await JsonControllerProfileSerializer.LoadAsync(stream).ConfigureAwait(true);
-			await ImportDocumentAsync(importedProfiles);
-		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException)
-		{
-			SetStatus("Import failed: " + ex.Message);
-		}
-	}
-
-	private async Task ExportProfilesAsync()
-	{
-		var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-		{
-			Title = "Export saved CopperPad profiles",
-			SuggestedFileName = "copperpad-profiles.json",
-			DefaultExtension = "json",
-			FileTypeChoices =
-			[
-				new FilePickerFileType("JSON profiles") { Patterns = ["*.json"] }
-			]
-		}).ConfigureAwait(true);
-		if (file == null)
-		{
-			return;
-		}
-
-		try
-		{
-			await using var stream = await file.OpenWriteAsync().ConfigureAwait(true);
-			if (stream.CanSeek)
-			{
-				stream.SetLength(0);
-			}
-			await JsonControllerProfileSerializer.SaveAsync(stream, _profiles).ConfigureAwait(true);
-			SetStatus("Exported profiles to " + file.Name);
-		}
-		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-		{
-			SetStatus("Export failed: " + ex.Message);
-		}
-	}
+    private async Task ExportProfilesAsync()
+    {
+        try
+        {
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Export saved CopperPad profiles",
+                SuggestedFileName = "copperpad-profiles.json",
+                DefaultExtension = "json",
+                FileTypeChoices = [new FilePickerFileType("JSON profiles") { Patterns = ["*.json"] }]
+            });
+            if (file == null) return;
+            await using var stream = await file.OpenWriteAsync();
+            if (stream.CanSeek) stream.SetLength(0);
+            await JsonControllerProfileSerializer.SaveAsync(stream, _profiles);
+            ClearUiError("export");
+            SetStatus("Exported profiles to " + file.Name);
+        }
+        catch (Exception ex)
+        {
+            SetStatus("Export failed: " + ex.Message);
+            ShowFailure("export", "Export failed", "The saved document could not be exported. Choose a writable location and retry.", ex, "Retry export", ExportProfilesAsync);
+        }
+    }
 
 	private void PopulateFieldsFromSelectedTarget()
 	{
@@ -1041,46 +1126,39 @@ internal sealed partial class MainWindow : Window, IDisposable
 		}
 	}
 
-	private void StartCalibrationCapture()
-	{
-		var binding = GetCalibrationBinding();
-		if (binding == null)
-		{
-			SetCalibrationStatus("Map this control before calibration.");
-			return;
-		}
+    private bool StartCalibrationCapture()
+    {
+        if (!CanCaptureCalibration()) return false;
+        var binding = GetCalibrationBinding()!;
+        var rest = _rangeReview ? _calibrationCapture?.Center : null;
+        _calibrationCapture = new AxisCalibrationCapture();
+        if (rest.HasValue) _calibrationCapture.CaptureCenter(rest.Value);
+        _calibrationActive = true;
+        _calibrationCapture.Observe(ReadCalibrationRaw(binding, _lastReport!));
+        lock (_rawReportGate)
+        {
+            _pendingRangeMinimum = _pendingRangeMaximum = _pendingRangeLast = null;
+            _rangeCaptureSource = (_selectedDevice!.Id, binding);
+        }
+        UpdateCalibrationPreview();
+        return true;
+    }
 
-		var rest = _rangeReview ? _calibrationCapture?.Center : null;
-		_calibrationCapture = new AxisCalibrationCapture();
-		if (rest.HasValue) _calibrationCapture.CaptureCenter(rest.Value);
-		_calibrationActive = true;
-		if (_lastReport != null)
-		{
-			_calibrationCapture.Observe(ReportAnalyzer.ReadSourceValue(binding.Source, _lastReport));
-		}
+    private void StopCalibrationCapture()
+    {
+        DrainCalibrationReports(endCapture: true);
+        _calibrationActive = false;
+        UpdateCalibrationPreview();
+    }
 
-		UpdateCalibrationPreview();
-	}
-
-	private void StopCalibrationCapture()
-	{
-		_calibrationActive = false;
-		UpdateCalibrationPreview();
-	}
-
-	private void CaptureCalibrationCenter()
-	{
-		var binding = GetCalibrationBinding();
-		if (binding == null || _lastReport == null)
-		{
-			SetCalibrationStatus("No live source for center.");
-			return;
-		}
-
-		_calibrationCapture ??= AxisCalibrationCapture.From(binding.Axis);
-		_calibrationCapture.CaptureCenter(ReportAnalyzer.ReadSourceValue(binding.Source, _lastReport));
-		UpdateCalibrationPreview();
-	}
+    private bool CaptureCalibrationCenter()
+    {
+        if (!CanCaptureCalibration()) return false;
+        _calibrationCapture ??= AxisCalibrationCapture.From(GetCalibrationBinding()!.Axis);
+        _calibrationCapture.CaptureCenter(ReadCalibrationRaw(GetCalibrationBinding()!, _lastReport!));
+        UpdateCalibrationPreview();
+        return true;
+    }
 
 	private void ApplyCalibration()
 	{
@@ -1104,11 +1182,17 @@ internal sealed partial class MainWindow : Window, IDisposable
 		UpdateBindingList();
 		UpdateValidation();
 		LoadCalibrationFromTarget();
-		SetCalibrationStatus($"Applied calibration to {target}.");
+		SetCalibrationStatus($"Applied calibration to {target}.", false);
 	}
 
 	private void LoadCalibrationFromTarget()
 	{
+        // A cancelled capture must not leak pending samples into the next axis/device.
+        lock (_rawReportGate)
+        {
+            _rangeCaptureSource = null;
+            _pendingRangeMinimum = _pendingRangeMaximum = _pendingRangeLast = null;
+        }
 		_loadingCalibration = true;
 		_invertCheck.IsVisible = !ProfileEditor.IsTriggerTarget(CalibrationTarget);
 		var binding = GetCalibrationBinding();
@@ -1121,26 +1205,13 @@ internal sealed partial class MainWindow : Window, IDisposable
 		_deadzoneNumber.Value = (decimal)_deadzoneSlider.Value;
 		_saturationNumber.Value = (decimal)_saturationSlider.Value;
 		_loadingCalibration = false;
+        _calibrationStage = CalibrationStage.Idle;
+        _calibrationStep.Text = "Capture rest, then move through the full range.";
+		_calibrationStatusText.Text = "";
+        _calibrationStatusText.IsVisible = false;
+        UpdateCalibrationControls();
 		UpdateCalibrationPreview();
 		UpdateCalibrationGraph();
-	}
-
-	private void ObserveCalibration(byte[] report)
-	{
-		if (!_calibrationActive)
-		{
-			return;
-		}
-
-		var binding = GetCalibrationBinding();
-		if (binding == null)
-		{
-			return;
-		}
-
-		_calibrationCapture ??= AxisCalibrationCapture.From(binding.Axis);
-		_calibrationCapture.Observe(ReportAnalyzer.ReadSourceValue(binding.Source, report));
-		UpdateCalibrationPreview();
 	}
 
 	private ControllerBinding? GetCalibrationBinding()
@@ -1162,45 +1233,41 @@ internal sealed partial class MainWindow : Window, IDisposable
 			return;
 		}
 
-		var state = _calibrationActive ? "capturing" : "idle";
-		_calibrationPreviewText.Text =
-			$"Range: {_calibrationCapture.Minimum?.ToString() ?? "-"}..{_calibrationCapture.Maximum?.ToString() ?? "-"}   Center: {_calibrationCapture.Center?.ToString() ?? "-"}   Last: {_calibrationCapture.LastRaw?.ToString() ?? "-"}   Deadzone: {_deadzoneSlider.Value:0.00}   Saturation: {_saturationSlider.Value:0.00}   {state}";
+        _calibrationPreviewText.Text = $"Range: {_calibrationCapture.Minimum?.ToString() ?? "—"}..{_calibrationCapture.Maximum?.ToString() ?? "—"} · Rest: {_calibrationCapture.Center?.ToString() ?? "—"}";
+
 	}
 
 	private void UpdateBindingList()
 	{
-		if (_session != null && _draftProfile != null) _session.Edit(_draftProfile);
+		if (_session != null && _draftProfile != null && !ReferenceEquals(_session.Draft, _draftProfile)) _session.Edit(_draftProfile);
 		RenderMappingRows();
 		UpdateEditorState();
 		SchedulePreview();
 
 	}
 
-	private void UpdateValidation()
-	{
-		if (_draftProfile == null || _selectedDevice == null)
-		{
-			_validationText.Text = "";
-			_saveProfileButton.IsEnabled = false;
-			return;
-		}
-
-		var issues = ProfileEditor.ValidateProfile(_draftProfile, _selectedDevice.MaxInputReportLength);
-		_validationText.Text = issues.Count == 0
-			? $"Profile: {_draftProfile.Name}   Bindings: {_draftProfile.Bindings.Count}"
-			: string.Join("\n", issues.Select(issue => issue.Message));
-		UpdateEditorState();
-	}
+    private void UpdateValidation()
+    {
+        var issues = _session?.Issues ?? Array.Empty<ProfileValidationIssue>();
+        _profileNameError.Text = _draftProfile != null && string.IsNullOrWhiteSpace(_draftProfile.Name) ? "A profile name is required." : "";
+        _profileNameError.IsVisible = !string.IsNullOrEmpty(_profileNameError.Text);
+        _validationText.Text = _session == null ? "Select a controller to edit its mapping." :
+            !_session.IsDirty && _draftProfile?.Bindings.Count == 0 ? "Built-in mapping is active. Assign controls to create a custom mapping." :
+            issues.Count > 0 ? string.Join("\n", issues.Select(x => x.Message)) : $"{_draftProfile?.Bindings.Count} assigned · Other controls are optional";
+        _validationText.Foreground = _session?.IsDirty == true && issues.Count > 0 ? CopperTheme.Error : CopperTheme.Muted;
+        UpdateEditorState();
+    }
 
 	private void UpdateSelectedDeviceDetails()
 	{
         var device = _selectedDevice;
         var mapping = device == null ? null : GetMappingInfo(device);
-        if (_session?.IsDirty != true) _previewText.Text = device == null ? "Connect a controller to see live input" : MappingDisplay.Format(mapping).Contains("Fallback", StringComparison.OrdinalIgnoreCase) ? "BUILT-IN OUTPUT · Generic fallback — unverified" : "SAVED / BUILT-IN OUTPUT";
+		if (_session?.IsDirty != true) UpdateOutputLabel();
         _deviceTitle.Text = device?.ProductName ?? "Connect your controller";
-        _deviceSubtitle.Text = device == null ? "No controller connected · Your unsaved work stays in this session" : $"Connected · {device.Transport} · {MappingDisplay.Format(mapping)}";
-        _setupButton.IsVisible = device != null && (mapping == null || mapping.ToString().Contains("Diagnostic", StringComparison.OrdinalIgnoreCase) || mapping.ToString().Contains("Fallback", StringComparison.OrdinalIgnoreCase));
-        _descriptorText.Text = device == null ? "No device selected" : $"{MappingDisplay.Format(mapping)}\nProfile document: {_profileStore.Path}\nVID/PID: {device.VendorId:X4}:{device.ProductId:X4}\nReport length: {device.MaxInputReportLength} bytes\n{device.Diagnostic}\n\nDescriptor\n{ToHexRows(device.ReportDescriptor.ToArray())}";
+        ToolTip.SetTip(_deviceTitle, device?.ProductName);
+        UpdateConnectionBadge(_deviceConnected);
+        _setupButton.IsVisible = device != null && _tabs.SelectedIndex != 1 && _draftProfile?.Bindings.Count == 0 && (mapping == null || mapping.Source.Contains("Diagnostic", StringComparison.OrdinalIgnoreCase) || mapping.Source.Contains("Fallback", StringComparison.OrdinalIgnoreCase));
+        _descriptorText.Text = device == null ? $"No device selected\nProfile document: {_profileStore.Path}" : $"{MappingDisplay.Format(mapping)}\nConnection: {device.Transport}\nProfile document: {_profileStore.Path}\nVID/PID: {device.VendorId:X4}:{device.ProductId:X4}\nReport length: {device.MaxInputReportLength} bytes\n{device.Diagnostic}\n\nDescriptor\n{ToHexRows(device.ReportDescriptor.ToArray())}";
         UpdateEditorState();
 	}
 
@@ -1228,11 +1295,14 @@ internal sealed partial class MainWindow : Window, IDisposable
 	{
 		try
 		{
-			return _host.GetMappingInfo(device.Id);
+			var mapping = _host.GetMappingInfo(device.Id);
+            ClearUiError("mapping lookup", device.Id);
+            return mapping;
 		}
 		catch (Exception ex)
 		{
 			SetStatus("Mapping lookup failed: " + ex.Message);
+            ShowFailure("mapping lookup", "Mapping lookup failed", $"{device.ProductName}: Refresh the device and try again.", ex, "Refresh devices", () => { RefreshDevices(); return Task.CompletedTask; }, device.Id);
 			return null;
 		}
 	}
@@ -1242,14 +1312,21 @@ internal sealed partial class MainWindow : Window, IDisposable
 
 	private void TryRunUiAction(string context, Action action)
 	{
+        var deviceId = _selectedDevice?.Id;
 		try
 		{
 			action();
+			if (context != "Preview failed") ClearUiError(context, deviceId);
 		}
 		catch (Exception ex)
 		{
 			CrashLog.Write(context, ex);
 			SetStatus(context + ": " + ex.Message);
+            ShowFailure(context, context, ex.Message, ex, context == "Preview failed" ? "Retry preview" : "Open Diagnostics", () => {
+                if (context == "Preview failed") { NavigateToError(deviceId, _tabs.SelectedIndex); SchedulePreview(); }
+                else NavigateToError(deviceId, 3);
+                return Task.CompletedTask;
+            }, deviceId);
 		}
 	}
 
@@ -1263,6 +1340,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 		{
 			CrashLog.Write(context, ex);
 			SetStatus(context + ": " + ex.Message);
+            ShowFailure(context, context, ex.Message, ex, "Open Diagnostics", () => { _tabs.SelectedIndex = 3; return Task.CompletedTask; });
 		}
 	}
 
@@ -1344,11 +1422,27 @@ internal sealed partial class MainWindow : Window, IDisposable
 	}
 
 	private void SetStatus(string text)
-		=> _statusText.Text = text;
+    {
+        _statusText.Text = text;
+        _statusText.IsVisible = !string.IsNullOrWhiteSpace(text);
+    }
 
-	private void SetCalibrationStatus(string text)
+	private void SetCalibrationStatus(string text, bool isError = true)
 	{
 		_calibrationStatusText.Text = text;
+        _calibrationStatusText.IsVisible = !string.IsNullOrEmpty(text);
+        _calibrationStatusText.Foreground = isError ? CopperTheme.Error : CopperTheme.Success;
+        if (isError)
+        {
+            var deviceId = _selectedDevice?.Id;
+            var target = CalibrationTarget;
+            ShowUiError("calibration", deviceId, "Calibration needs attention", $"{_selectedDevice?.ProductName} · {Friendly(target)}: {text}", text, "Go to Calibration", () => {
+                NavigateToError(deviceId, 2);
+                _calibrationTargetBox.SelectedItem = _calibrationTargetBox.Items.OfType<MappingTargetItem>().First(x => x.Element == target);
+                RevealErrorControl(_calibrationAction); return Task.CompletedTask;
+            });
+        }
+        else ClearUiError("calibration", _selectedDevice?.Id);
 		UpdateCalibrationPreview();
 	}
 
@@ -1426,9 +1520,10 @@ internal sealed partial class MainWindow : Window, IDisposable
 		_host.Dispose();
 	}
 
-	private sealed class DeviceListItem(HidDeviceInfo device)
+	private sealed class DeviceListItem(HidDeviceInfo device, bool connected)
 	{
 		public HidDeviceInfo Device { get; } = device;
+        public bool Connected { get; } = connected;
 
 		public override string ToString()
 			=> $"{Device.ProductName}  0x{Device.VendorId:X4}:0x{Device.ProductId:X4}";

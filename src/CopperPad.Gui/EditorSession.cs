@@ -16,7 +16,9 @@ internal sealed class EditorSession(HidDeviceInfo device, ControllerProfile? sav
     public bool IsDirty => !Equivalent(Baseline, Draft);
     public bool CanUndo => _undo.Count > 0;
     public bool CanRedo => _redo.Count > 0;
-    public IReadOnlyList<ProfileValidationIssue> Issues => ProfileEditor.ValidateProfile(Draft, Device.MaxInputReportLength);
+    public IReadOnlyList<ProfileValidationIssue> Issues => Draft.Bindings.Count == 0
+        ? ProfileEditor.ValidateProfile(Draft, Device.MaxInputReportLength).Append(new ProfileValidationIssue("Assign at least one control before saving a custom mapping.")).ToArray()
+        : ProfileEditor.ValidateProfile(Draft, Device.MaxInputReportLength);
     public void Edit(ControllerProfile profile)
     {
         if (Equivalent(Draft, profile)) return;
@@ -36,7 +38,7 @@ internal sealed class EditorSession(HidDeviceInfo device, ControllerProfile? sav
         list[index] = draft;
         return profiles with { Profiles = list };
     }
-    public ControllerProfileSet Preview(ControllerProfileSet savedProfiles) => savedProfiles with
+    public ControllerProfileSet Preview(ControllerProfileSet savedProfiles) => Issues.Count > 0 ? savedProfiles : savedProfiles with
     {
         Profiles = new[] { Draft with { DeviceId = Device.Id } }.Concat(savedProfiles.Profiles).ToArray()
     };

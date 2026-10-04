@@ -4,6 +4,22 @@ using CopperPad.Gui;
 public sealed class EditorSessionTests
 {
     [Fact]
+    public void EmptyCustomDraftIsInvalidAndCannotOverridePersistedMappings()
+    {
+        var session = new EditorSession(WorkspaceTests.Device(), null);
+        session.Edit(session.Draft with { Name = "Renamed built-in" });
+        Assert.Contains(session.Issues, x => x.Message.Contains("at least one"));
+        Assert.Same(ControllerProfileSet.Empty, session.Preview(ControllerProfileSet.Empty));
+        var binding = ProfileEditor.CreateBinding(ControllerElement.South, new ControllerBindingSource { Kind = ControllerBindingSourceKind.ReportBit }, null);
+        session.Edit(ProfileEditor.UpsertBinding(session.Draft, binding));
+        Assert.Empty(session.Issues);
+        session.Edit(session.Draft with { Bindings = [] });
+        Assert.NotEmpty(session.Issues);
+        session.Undo();
+        Assert.Empty(session.Issues);
+    }
+
+    [Fact]
     public void NewSessionIsCleanAndClearBindingsCanBeUndoneAndRedone()
     {
         var session = new EditorSession(WorkspaceTests.Device(), null);
@@ -20,7 +36,7 @@ public sealed class EditorSessionTests
     public void PreviewIsDeviceScopedAndKeepsSavedProfilePrecedenceIntact()
     {
         var device = WorkspaceTests.Device();
-        var saved = ProfileEditor.CreateDefaultProfile(device, DateTimeOffset.UtcNow);
+        var saved = ProfileEditor.UpsertBinding(ProfileEditor.CreateDefaultProfile(device, DateTimeOffset.UtcNow), ProfileEditor.CreateBinding(ControllerElement.South, new ControllerBindingSource { Kind = ControllerBindingSourceKind.ReportBit }, null));
         var profiles = new ControllerProfileSet { Profiles = [saved] };
         var session = new EditorSession(device, saved);
         session.Edit(saved with { Name = "Draft" });

@@ -1,19 +1,23 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
 using Avalonia.Media;
+using Avalonia.Media.Immutable;
 using Avalonia.Styling;
 
 namespace CopperPad.Gui;
 
 internal static class CopperTheme
 {
-    public static readonly SolidColorBrush Background = new(Color.Parse("#171A1E"));
-    public static readonly SolidColorBrush Surface = new(Color.Parse("#22272D"));
-    public static readonly SolidColorBrush Copper = new(Color.Parse("#D99A70"));
-    public static readonly SolidColorBrush Muted = new(Color.Parse("#A9B3BD"));
-    public static readonly SolidColorBrush Line = new(Color.Parse("#3B444E"));
-    public static readonly SolidColorBrush Success = new(Color.Parse("#8DD4AE"));
-    public static readonly SolidColorBrush Warning = new(Color.Parse("#E6BC72"));
+    public static readonly ImmutableSolidColorBrush Background = new(Color.Parse("#171A1E"));
+    public static readonly ImmutableSolidColorBrush Surface = new(Color.Parse("#22272D"));
+    public static readonly ImmutableSolidColorBrush Copper = new(Color.Parse("#D99A70"));
+    public static readonly ImmutableSolidColorBrush Muted = new(Color.Parse("#A9B3BD"));
+    public static readonly ImmutableSolidColorBrush Line = new(Color.Parse("#3B444E"));
+    public static readonly ImmutableSolidColorBrush Success = new(Color.Parse("#8DD4AE"));
+    public static readonly ImmutableSolidColorBrush Warning = new(Color.Parse("#E6BC72"));
+    public static readonly ImmutableSolidColorBrush Error = new(Color.Parse("#FF9D8E"));
+    public static readonly ImmutableSolidColorBrush ErrorSurface = new(Color.Parse("#2D2222"));
     public static void Install(Application app)
     {
         app.Resources["SystemAccentColor"] = Color.Parse("#D99A70");
@@ -22,5 +26,8 @@ internal static class CopperTheme
         app.Styles.Add(new Style(x => x.OfType<Button>().Class("primary")) { Setters = { new Setter(Button.BackgroundProperty, Copper), new Setter(Button.ForegroundProperty, Background) } });
         app.Styles.Add(new Style(x => x.OfType<TabItem>()) { Setters = { new Setter(TabItem.FontSizeProperty, 16d), new Setter(TabItem.PaddingProperty, new Thickness(10, 8)) } });
         app.Styles.Add(new Style(x => x.OfType<ListBox>()) { Setters = { new Setter(ListBox.BackgroundProperty, Surface) } });
+        app.Styles.Add(new Style(x => x.OfType<ListBoxItem>()) { Setters = { new Setter(ListBoxItem.HorizontalContentAlignmentProperty, Avalonia.Layout.HorizontalAlignment.Stretch) } });
+        app.Styles.Add(new Style(x => x.OfType<Expander>()) { Setters = { new Setter(Expander.BackgroundProperty, Surface), new Setter(Expander.BorderBrushProperty, Line), new Setter(Expander.BorderThicknessProperty, new Thickness(1)), new Setter(Expander.CornerRadiusProperty, new CornerRadius(6)) } });
+        app.Styles.Add(new Style(x => x.OfType<Expander>().Template().OfType<ToggleButton>()) { Setters = { new Setter(ToggleButton.BackgroundProperty, Surface) } });
     }
 }

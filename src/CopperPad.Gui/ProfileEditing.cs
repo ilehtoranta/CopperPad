@@ -262,6 +262,7 @@ internal sealed class AxisCalibrationCapture
 	public int? Maximum { get; private set; }
 	public int? Center { get; private set; }
 	public int? LastRaw { get; private set; }
+	public bool HasRange => Minimum.HasValue && Maximum.HasValue && Maximum > Minimum;
 
 	public void Observe(int raw)
 	{
@@ -279,12 +280,9 @@ internal sealed class AxisCalibrationCapture
 
 	public AxisCalibration ToCalibration(bool invert, double deadzone, double saturation)
 	{
-		var minimum = Minimum ?? 0;
-		var maximum = Maximum ?? 255;
-		if (maximum <= minimum)
-		{
-			maximum = minimum + 1;
-		}
+		if (!HasRange) throw new InvalidOperationException("Capture a non-zero range before creating calibration.");
+		var minimum = Minimum!.Value;
+		var maximum = Maximum!.Value;
 
 		return new AxisCalibration
 		{

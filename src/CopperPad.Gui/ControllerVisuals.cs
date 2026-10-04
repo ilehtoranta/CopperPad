@@ -6,7 +6,8 @@ namespace CopperPad.Gui;
 internal sealed class GamepadView : Control
 {
     private CopperControllerSnapshot? _state;
-    public ControllerElement? Highlight { get; set; }
+    private ControllerElement? _highlight;
+    public ControllerElement? Highlight { get => _highlight; set { _highlight = value; InvalidateVisual(); } }
     public GamepadView() { Height = 240; MinWidth = 300; Avalonia.Automation.AutomationProperties.SetName(this, "Live controller diagram. Numeric readings and labeled controls are available below."); }
     public void SetState(CopperControllerSnapshot? state) { _state = state; InvalidateVisual(); }
     public override void Render(DrawingContext context)
@@ -37,20 +38,20 @@ internal sealed class GamepadView : Control
     private void DrawButton(DrawingContext c, ControllerElement element, double x, double y, string label, double radius = 18)
     {
         var active = _state?.IsPressed(element) == true;
-        c.DrawEllipse(active ? CopperTheme.Copper : CopperTheme.Surface, new Pen(active ? CopperTheme.Copper : CopperTheme.Line, 2), new Point(x, y), radius, radius);
+        c.DrawEllipse(active ? CopperTheme.Copper : CopperTheme.Surface, new Pen(active || Highlight == element ? CopperTheme.Copper : CopperTheme.Line, Highlight == element ? 4 : 2), new Point(x, y), radius, radius);
         var text = new FormattedText(label, System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 14, active ? CopperTheme.Background : CopperTheme.Muted);
         c.DrawText(text, new Point(x - text.Width / 2, y - text.Height / 2));
     }
     private void DrawStick(DrawingContext c, double x, double y, ControllerElement axisX, ControllerElement axisY, ControllerElement button)
     {
-        c.DrawEllipse(null, new Pen(CopperTheme.Line, 2), new Point(x, y), 35, 35);
+        c.DrawEllipse(null, new Pen(Highlight == axisX || Highlight == axisY || Highlight == button ? CopperTheme.Copper : CopperTheme.Line, 2), new Point(x, y), 35, 35);
         c.DrawLine(new Pen(CopperTheme.Line), new Point(x - 35, y), new Point(x + 35, y));
         c.DrawLine(new Pen(CopperTheme.Line), new Point(x, y - 35), new Point(x, y + 35));
         c.DrawEllipse(_state?.IsPressed(button) == true ? CopperTheme.Copper : CopperTheme.Success, null, new Point(x + (_state?.GetAxis(axisX) ?? 0) * 26, y - (_state?.GetAxis(axisY) ?? 0) * 26), 10, 10);
     }
     private void DrawTrigger(DrawingContext c, double x, ControllerElement element, string label)
     {
-        c.DrawRectangle(CopperTheme.Line, null, new Rect(x, 15, 120, 8), 4, 4);
+        c.DrawRectangle(Highlight == element ? CopperTheme.Copper : CopperTheme.Line, null, new Rect(x, 15, 120, 8), 4, 4);
         c.DrawRectangle(CopperTheme.Copper, null, new Rect(x, 15, Math.Clamp(_state?.GetAxis(element) ?? 0, 0, 1) * 120, 8), 4, 4);
         c.DrawText(new FormattedText(label, System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 12, CopperTheme.Muted), new Point(x - 25, 10));
     }
@@ -59,11 +60,12 @@ internal sealed class CalibrationGraph : Control
 {
     private double _input, _output, _deadzone;
     private bool _trigger, _vertical;
-    public CalibrationGraph() { Height = 160; }
+    public CalibrationGraph() { Height = 120; }
     public void Update(double input, double output, double deadzone, bool trigger, bool vertical = false) { _input = input; _output = output; _deadzone = deadzone; _trigger = trigger; _vertical = vertical; InvalidateVisual(); }
     public override void Render(DrawingContext c)
     {
         base.Render(c);
+        using var transform = c.PushTransform(Matrix.CreateScale(1, .8));
         var left = _trigger ? 16 : 130;
         var width = Math.Max(1, Bounds.Width - left - 16);
         double Position(double value) => left + (_trigger ? Math.Clamp(value, 0, 1) : (Math.Clamp(value, -1, 1) + 1) / 2) * width;
@@ -81,7 +83,6 @@ internal sealed class CalibrationGraph : Control
         c.DrawRectangle(CopperTheme.Line, null, new Rect(start, 20, Position(_deadzone) - start, 110));
         c.DrawLine(new Pen(CopperTheme.Muted, 3), new Point(Position(_input), 30), new Point(Position(_input), 70));
         c.DrawLine(new Pen(CopperTheme.Copper, 4), new Point(Position(_output), 80), new Point(Position(_output), 120));
-        c.DrawText(new FormattedText("Raw input (top)   /   Adjusted output (bottom)   /   Shaded deadzone", System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 11, CopperTheme.Muted), new Point(16, 139));
     }
 }
 

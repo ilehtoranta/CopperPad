@@ -189,7 +189,7 @@ internal sealed class ProfileControllerMapper(ControllerProfile profile) : ICont
 		}
 	}
 
-	private static int ReadAxisSource(ControllerBindingSource source, byte[] report, int length)
+	internal static int ReadAxisSource(ControllerBindingSource source, byte[] report, int length)
 	{
 		if (source.Kind == ControllerBindingSourceKind.ReportInt16LittleEndian && source.Offset + 1 < length)
 		{
@@ -199,7 +199,7 @@ internal sealed class ProfileControllerMapper(ControllerProfile profile) : ICont
 		return report[source.Offset];
 	}
 
-	private static bool ReadButtonSource(ControllerBindingSource source, byte[] report, int length)
+	internal static bool ReadButtonSource(ControllerBindingSource source, byte[] report, int length)
 	{
 		var pressed = source.Kind switch
 		{

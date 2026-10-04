@@ -339,6 +339,16 @@ public sealed class ProfileEditingTests
 	}
 
 	[Fact]
+	public void AxisCalibrationCapture_DoesNotInventAnIncompleteRange()
+	{
+		var capture = new AxisCalibrationCapture();
+		Assert.Throws<InvalidOperationException>(() => capture.ToCalibration(false, .1, 1));
+		capture.CaptureCenter(128);
+		Assert.False(capture.HasRange);
+		Assert.Throws<InvalidOperationException>(() => capture.ToCalibration(false, .1, 1));
+	}
+
+	[Fact]
 	public void ProfileValidator_BlocksDuplicateTargetsAndInvalidOffsets()
 	{
 		var profile = new ControllerProfile

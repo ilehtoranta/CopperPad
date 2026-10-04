@@ -16,7 +16,7 @@ public sealed class GuiTestApplication : Application
     public override void Initialize() { Styles.Add(new Avalonia.Themes.Fluent.FluentTheme()); RequestedThemeVariant = Avalonia.Styling.ThemeVariant.Dark; CopperTheme.Install(this); }
 }
 
-public sealed class WorkspaceTests
+public sealed partial class WorkspaceTests
 {
     internal static HidDeviceInfo Device(string id = "test-pad") => new(id, "Studio controller", 0x1234, 0x5678, ControllerTransport.Usb, 8, new byte[] { 1, 2 }, true, false, null);
     private static T Field<T>(MainWindow window, string name) => (T)typeof(MainWindow).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
@@ -26,6 +26,13 @@ public sealed class WorkspaceTests
         var window = new MainWindow(host, new FileControllerProfileStore(path ?? Path.Combine(Path.GetTempPath(), "CopperPad-tests", Guid.NewGuid() + ".json")));
         window.Show(); Dispatcher.UIThread.RunJobs(); return window;
     }
+    private static void SeedBinding(MainWindow window, ControllerElement target = ControllerElement.South, ControllerBindingSourceKind kind = ControllerBindingSourceKind.ReportBit)
+    {
+        var editor = Field<EditorSession>(window, "_session");
+        editor.Edit(ProfileEditor.UpsertBinding(editor.Draft, ProfileEditor.CreateBinding(target, new ControllerBindingSource { Kind = kind, Offset = 0, Bit = 0 }, null)));
+        Invoke(window, "RestoreSession");
+    }
+    private static ScrollViewer PageScroll(TabControl tabs) => ((TabItem)tabs.SelectedItem!).Content is ScrollViewer scroll ? scroll : ((Grid)((TabItem)tabs.SelectedItem!).Content!).Children.OfType<ScrollViewer>().Single();
     private static void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
 
     private static Task CallAsync(MainWindow window, string method, params object[] args) => (Task)typeof(MainWindow).GetMethod(method, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, args)!;
@@ -83,7 +90,8 @@ public sealed class WorkspaceTests
             Directory.CreateDirectory(blockedPath);
             using var window = Open(host, blockedPath);
             host.Devices(Device()); Dispatcher.UIThread.RunJobs();
-            Field<TextBox>(window, "_profileName").Text = "Keep this draft"; Dispatcher.UIThread.RunJobs();
+            SeedBinding(window);
+        Field<TextBox>(window, "_profileName").Text = "Keep this draft"; Dispatcher.UIThread.RunJobs();
             Assert.True(Field<EditorSession>(window, "_session").IsDirty, "Draft must be dirty before saving");
             await CallAsync(window, "SaveDraftProfileAsync");
             Assert.True(Field<EditorSession>(window, "_session").IsDirty, Field<TextBlock>(window, "_statusText").Text);
@@ -105,12 +113,14 @@ public sealed class WorkspaceTests
             var path = Path.Combine(Path.GetTempPath(), "CopperPad-tests", Guid.NewGuid() + ".json");
             var host = new FakeGuiService(); using var window = Open(host, path);
             host.Devices(Device()); Dispatcher.UIThread.RunJobs();
-            Field<TextBox>(window, "_profileName").Text = "Saved on close"; Dispatcher.UIThread.RunJobs();
+            SeedBinding(window);
+        Field<TextBox>(window, "_profileName").Text = "Saved on close"; Dispatcher.UIThread.RunJobs();
             window.DialogHandler = (_, _, _) => Task.FromResult<string?>("Cancel");
             window.Close(); Assert.True(window.IsVisible);
             window.DialogHandler = (_, _, _) => Task.FromResult<string?>("Save all");
-            window.Close(); await Task.Delay(200);
-            Assert.False(window.IsVisible);
+            window.Close();
+            for (var attempt = 0; attempt < 40 && window.IsVisible; attempt++) await Task.Delay(50);
+            Assert.False(window.IsVisible, Field<TextBlock>(window, "_statusText").Text);
             var saved = await new FileControllerProfileStore(path).LoadAsync();
             Assert.Equal("Saved on close", Assert.Single(saved.Profiles).Name);
             File.Delete(path);
@@ -157,6 +167,7 @@ public sealed class WorkspaceTests
             edit.Edit(ProfileEditor.UpsertBinding(edit.Draft, ProfileEditor.CreateBinding(ControllerElement.LeftStickX, new ControllerBindingSource { Kind = ControllerBindingSourceKind.ReportByte, Offset = 0 }, new AxisCalibration())));
             Invoke(window, "RestoreSession");
             var before = edit.Draft;
+            host.Report(Device(), [128,0,0,0,0,0,0,0]); Dispatcher.UIThread.RunJobs();
             Invoke(window, "StartCalibrationCapture");
             var capture = Field<AxisCalibrationCapture>(window, "_calibrationCapture");
             capture.CaptureCenter(128); capture.Observe(10); capture.Observe(240);
@@ -196,6 +207,7 @@ public sealed class WorkspaceTests
         var host = new FakeGuiService(); using var window = Open(host);
         host.Devices(Device()); Dispatcher.UIThread.RunJobs();
         Field<TabControl>(window, "_tabs").SelectedIndex = 1;
+        SeedBinding(window);
         Field<TextBox>(window, "_profileName").Text = "My edited controller";
         Dispatcher.UIThread.RunJobs();
         host.Devices(Device()); Dispatcher.UIThread.RunJobs();
@@ -237,6 +249,7 @@ public sealed class WorkspaceTests
         {
         var host = new FakeGuiService(); using var window = Open(host);
         host.Devices(Device()); Dispatcher.UIThread.RunJobs();
+        SeedBinding(window);
         Field<TextBox>(window, "_profileName").Text = "Draft"; Dispatcher.UIThread.RunJobs();
         await Task.Delay(300);
         Assert.Equal("test-pad", host.Profiles.Profiles[0].DeviceId);
@@ -265,6 +278,10 @@ public sealed class WorkspaceTests
         editing.Edit(ProfileEditor.UpsertBinding(editing.Draft, ProfileEditor.CreateBinding(ControllerElement.LeftStickX, new ControllerBindingSource { Kind = ControllerBindingSourceKind.ReportByte, Offset = 0 }, new AxisCalibration { Minimum = 0, Maximum = 255, Center = 128, Deadzone = .15 })));
         Invoke(window, "RestoreSession");
         host.Report(Device(), [170,0,0,0,0,0,0,0]); Dispatcher.UIThread.RunJobs();
+        host.Snapshot(new CopperControllerSnapshot("test-pad", DateTimeOffset.UtcNow, true, "Studio controller", 0x1234, 0x5678, ControllerTransport.Usb,
+            new Dictionary<ControllerElement, ControllerElementValue> { [ControllerElement.South] = ControllerElementValue.Button(true), [ControllerElement.LeftStickX] = ControllerElementValue.Axis(.33), [ControllerElement.LeftStickY] = ControllerElementValue.Axis(.2), [ControllerElement.RightTrigger] = ControllerElementValue.Trigger(.75) },
+            [ControllerProfileKind.RawInput], ControllerMappingSource.SdlGameControllerDb, "Built-in mapping", null));
+        Dispatcher.UIThread.RunJobs();
         var tabs = Field<TabControl>(window, "_tabs");
         var output = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../artifacts/ui-review"));
         Directory.CreateDirectory(output);
@@ -275,15 +292,32 @@ public sealed class WorkspaceTests
             Assert.NotNull(frame);
             frame.Save(Path.Combine(output, $"page-{page}-{width}x{height}-{scale:0.0}.png"));
             Assert.True(Field<Button>(window, "_saveProfileButton").Bounds.Width > 0);
+            AssertVisibleInWindow(window, Field<Button>(window, "_saveProfileButton"));
+            if (page == 1) { AssertVisibleInWindow(window, Field<TextBox>(window, "_profileName")); AssertVisibleInWindow(window, Field<TextBlock>(window, "_validationText")); AssertVisibleInWindow(window, Field<Button>(window, "_startGuidedMappingButton")); }
+            if (page == 2) { AssertVisibleInWindow(window, Field<Button>(window, "_calibrationAction")); AssertVisibleInWindow(window, Field<NumericUpDown>(window, "_deadzoneNumber")); AssertVisibleInWindow(window, Field<NumericUpDown>(window, "_saturationNumber")); }
             if (page == 1) Field<Expander>(window, "_advancedEditor").IsExpanded = true;
-            var scroll = (ScrollViewer)((TabItem)tabs.SelectedItem!).Content!;
+            var scroll = PageScroll(tabs);
             window.UpdateLayout(); scroll.ScrollToEnd(); window.UpdateLayout();
             using var lower = window.CaptureRenderedFrame();
             lower!.Save(Path.Combine(output, $"page-{page}-lower-{width}x{height}-{scale:0.0}.png"));
         }
         host.Devices(); Dispatcher.UIThread.RunJobs();
-        using var empty = window.CaptureRenderedFrame();
-        empty!.Save(Path.Combine(output, $"empty-{width}x{height}-{scale:0.0}.png"));
+        using (var disconnected = window.CaptureRenderedFrame())
+            disconnected!.Save(Path.Combine(output, $"disconnected-{width}x{height}-{scale:0.0}.png"));
+        Assert.True(Field<Button>(window, "_revertButton").IsEnabled);
+        Click(Field<Button>(window, "_revertButton"));
+        Assert.Empty(Field<ListBox>(window, "_deviceList").Items);
+        Assert.False(Field<Button>(window, "_saveProfileButton").IsEnabled);
+        Assert.False(Field<Expander>(window, "_advancedEditor").IsEnabled);
+        Assert.False(Field<Button>(window, "_clearAllButton").IsEnabled);
+        for (var page = 0; page < 4; page++)
+        {
+            tabs.SelectedIndex = page; window.UpdateLayout(); Dispatcher.UIThread.RunJobs();
+            Assert.Contains("Connect", Field<TextBlock>(window, "_deviceTitle").Text);
+            AssertVisibleInWindow(window, Field<Button>(window, "_saveProfileButton"));
+            using var empty = window.CaptureRenderedFrame();
+            empty!.Save(Path.Combine(output, $"empty-{page}-{width}x{height}-{scale:0.0}.png"));
+        }
 
         }, CancellationToken.None);
     }
@@ -296,12 +330,20 @@ internal sealed class FakeGuiService : IControllerGuiService
     public event EventHandler<CopperControllerSnapshotChangedEventArgs>? SnapshotChanged;
     public ControllerProfileSet Profiles { get; private set; } = ControllerProfileSet.Empty;
     public void Devices(params HidDeviceInfo[] devices) => DevicesChanged?.Invoke(this, new HidDevicesChangedEventArgs(devices));
-    public void Report(HidDeviceInfo device, byte[] bytes) => RawReportReceived?.Invoke(this, new ControllerRawReportReceivedEventArgs(device, bytes, bytes.Length, DateTimeOffset.UtcNow));
+    public void Report(HidDeviceInfo device, byte[] bytes, DateTimeOffset? timestamp = null) => RawReportReceived?.Invoke(this, new ControllerRawReportReceivedEventArgs(device, bytes, bytes.Length, timestamp ?? DateTimeOffset.UtcNow));
     public void Snapshot(CopperControllerSnapshot snapshot) => SnapshotChanged?.Invoke(this, new CopperControllerSnapshotChangedEventArgs(snapshot));
-    public void Start() { }
+    public bool FailStart { get; set; }
+    public bool FailPreview { get; set; }
+    public void Start() { if (FailStart) throw new IOException("Synthetic device scan failure"); }
     public void Stop() { }
-    public void SelectDevice(string? id) { }
-    public void UpdateProfiles(ControllerProfileSet profiles) => Profiles = profiles;
-    public ControllerMappingInfo? GetMappingInfo(string id) => new("SDL", "Built-in mapping");
+    public string? SelectedDeviceId { get; private set; }
+    public void SelectDevice(string? id) { SelectedDeviceId = id; }
+    public void UpdateProfiles(ControllerProfileSet profiles)
+    {
+        if (FailPreview) throw new IOException("Synthetic preview failure");
+        Profiles = profiles;
+    }
+    public ControllerMappingInfo? Mapping { get; set; } = new("SDL", "Built-in mapping");
+    public ControllerMappingInfo? GetMappingInfo(string id) => Mapping;
     public void Dispose() { }
 }
