@@ -8,17 +8,65 @@ internal sealed class GamepadView : Control
     private CopperControllerSnapshot? _state;
     private ControllerElement? _highlight;
     public ControllerElement? Highlight { get => _highlight; set { _highlight = value; InvalidateVisual(); } }
-    public GamepadView() { Height = 240; MinWidth = 300; Avalonia.Automation.AutomationProperties.SetName(this, "Live controller diagram. Numeric readings and labeled controls are available below."); }
-    public void SetState(CopperControllerSnapshot? state) { _state = state; InvalidateVisual(); }
+    internal TextBlock LeftStickReadout { get; } = Readout();
+    internal TextBlock RightStickReadout { get; } = Readout();
+    internal TextBlock LeftTriggerReadout { get; } = Readout();
+    internal TextBlock RightTriggerReadout { get; } = Readout();
+    public GamepadView()
+    {
+        Height = 300; MinWidth = 300;
+        Avalonia.Automation.AutomationProperties.SetName(this, "Live controller diagram");
+        foreach (var readout in Readouts)
+        {
+            VisualChildren.Add(readout);
+            LogicalChildren.Add(readout);
+        }
+        SetState(null);
+    }
+    private static TextBlock Readout() => new() { TextAlignment = TextAlignment.Center, Foreground = CopperTheme.Muted,
+        FontFamily = new FontFamily("Consolas, monospace") };
+    private TextBlock[] Readouts => [LeftStickReadout, RightStickReadout, LeftTriggerReadout, RightTriggerReadout];
+    public void SetState(CopperControllerSnapshot? state)
+    {
+        _state = state;
+        LeftStickReadout.Text = state == null ? "X —\nY —" : $"X {state.GetAxis(ControllerElement.LeftStickX):0.00}\nY {state.GetAxis(ControllerElement.LeftStickY):0.00}";
+        RightStickReadout.Text = state == null ? "X —\nY —" : $"X {state.GetAxis(ControllerElement.RightStickX):0.00}\nY {state.GetAxis(ControllerElement.RightStickY):0.00}";
+        LeftTriggerReadout.Text = state == null ? "LT —" : $"LT {state.GetAxis(ControllerElement.LeftTrigger):0.00}";
+        RightTriggerReadout.Text = state == null ? "RT —" : $"RT {state.GetAxis(ControllerElement.RightTrigger):0.00}";
+        foreach (var (readout, label) in new[] { (LeftStickReadout, "Left stick"), (RightStickReadout, "Right stick"), (LeftTriggerReadout, "Left trigger"), (RightTriggerReadout, "Right trigger") })
+            Avalonia.Automation.AutomationProperties.SetName(readout, label + ": " + readout.Text);
+        InvalidateVisual();
+    }
+    private static double DiagramScale(Size size) => Math.Min(size.Width / 600, size.Height / 320);
+    protected override Size MeasureOverride(Size availableSize)
+    {
+        var size = new Size(double.IsFinite(availableSize.Width) ? availableSize.Width : 600, 300);
+        var scale = DiagramScale(size);
+        foreach (var readout in Readouts)
+        {
+            readout.FontSize = Math.Max(12, 14 * scale);
+            readout.Measure(new Size(130 * scale, 40));
+        }
+        return size;
+    }
+    protected override Size ArrangeOverride(Size finalSize)
+    {
+        var scale = DiagramScale(finalSize);
+        var origin = new Point((finalSize.Width - 600 * scale) / 2, (finalSize.Height - 320 * scale) / 2);
+        void Place(TextBlock readout, double x, double y) => readout.Arrange(new Rect(origin.X + x * scale - readout.DesiredSize.Width / 2, origin.Y + y * scale, readout.DesiredSize.Width, readout.DesiredSize.Height));
+        Place(LeftTriggerReadout, 155, 0); Place(RightTriggerReadout, 445, 0);
+        Place(LeftStickReadout, 230, 240); Place(RightStickReadout, 370, 240);
+        return finalSize;
+    }
     public override void Render(DrawingContext context)
     {
         base.Render(context);
-        var scale = Math.Min(Bounds.Width / 600, Bounds.Height / 320);
-        using var transform = context.PushTransform(Matrix.CreateScale(scale, scale) * Matrix.CreateTranslation((Bounds.Width - 600 * scale) / 2, 0));
+        var scale = DiagramScale(Bounds.Size);
+        using var transform = context.PushTransform(Matrix.CreateScale(scale, scale) * Matrix.CreateTranslation((Bounds.Width - 600 * scale) / 2, (Bounds.Height - 320 * scale) / 2));
         var outline = StreamGeometry.Parse("M 130,70 C 75,65 55,145 35,245 C 22,310 80,320 125,255 L 165,220 L 435,220 L 475,255 C 520,320 578,310 565,245 C 545,145 525,65 470,70 Z");
         context.DrawGeometry(CopperTheme.Background, new Pen(CopperTheme.Line, 3), outline);
-        DrawButton(context, ControllerElement.LeftShoulder, 150, 50, "LB", 30);
-        DrawButton(context, ControllerElement.RightShoulder, 450, 50, "RB", 30);
+        DrawButton(context, ControllerElement.LeftShoulder, 150, 55, "LB", 25);
+        DrawButton(context, ControllerElement.RightShoulder, 450, 55, "RB", 25);
         DrawButton(context, ControllerElement.DPadUp, 150, 116, "↑");
         DrawButton(context, ControllerElement.DPadLeft, 118, 148, "←");
         DrawButton(context, ControllerElement.DPadRight, 182, 148, "→");
@@ -51,9 +99,8 @@ internal sealed class GamepadView : Control
     }
     private void DrawTrigger(DrawingContext c, double x, ControllerElement element, string label)
     {
-        c.DrawRectangle(Highlight == element ? CopperTheme.Copper : CopperTheme.Line, null, new Rect(x, 15, 120, 8), 4, 4);
-        c.DrawRectangle(CopperTheme.Copper, null, new Rect(x, 15, Math.Clamp(_state?.GetAxis(element) ?? 0, 0, 1) * 120, 8), 4, 4);
-        c.DrawText(new FormattedText(label, System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Typeface.Default, 12, CopperTheme.Muted), new Point(x - 25, 10));
+        c.DrawRectangle(Highlight == element ? CopperTheme.Copper : CopperTheme.Line, null, new Rect(x, 19, 120, 8), 4, 4);
+        c.DrawRectangle(CopperTheme.Copper, null, new Rect(x, 19, Math.Clamp(_state?.GetAxis(element) ?? 0, 0, 1) * 120, 8), 4, 4);
     }
 }
 internal sealed class CalibrationGraph : Control

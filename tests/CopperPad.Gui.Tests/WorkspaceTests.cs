@@ -293,7 +293,7 @@ public sealed partial class WorkspaceTests
             frame.Save(Path.Combine(output, $"page-{page}-{width}x{height}-{scale:0.0}.png"));
             Assert.True(Field<Button>(window, "_saveProfileButton").Bounds.Width > 0);
             AssertVisibleInWindow(window, Field<Button>(window, "_saveProfileButton"));
-            if (page == 1) { AssertVisibleInWindow(window, Field<TextBox>(window, "_profileName")); AssertVisibleInWindow(window, Field<TextBlock>(window, "_validationText")); AssertVisibleInWindow(window, Field<Button>(window, "_startGuidedMappingButton")); }
+            if (page == 1) { AssertVisibleInWindow(window, Field<TextBox>(window, "_profileName")); Assert.False(Field<TextBlock>(window, "_validationText").IsVisible); AssertVisibleInWindow(window, Field<Button>(window, "_startGuidedMappingButton")); }
             if (page == 2) { AssertVisibleInWindow(window, Field<Button>(window, "_calibrationAction")); AssertVisibleInWindow(window, Field<NumericUpDown>(window, "_deadzoneNumber")); AssertVisibleInWindow(window, Field<NumericUpDown>(window, "_saturationNumber")); }
             if (page == 1) Field<Expander>(window, "_advancedEditor").IsExpanded = true;
             var scroll = PageScroll(tabs);

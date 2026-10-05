@@ -56,6 +56,10 @@ internal sealed partial class MainWindow
         _profileName.IsEnabled = _session != null;
         _advancedEditor.IsEnabled = _openAdvancedButton.IsEnabled = _session != null;
         _clearAllButton.IsEnabled = _draftProfile?.Bindings.Count > 0 && !_guidedMappingActive;
+        _mappingMore.IsEnabled = _session != null && !_guidedMappingActive;
+        _mappingMore.IsVisible = _undoButton.IsVisible = _redoButton.IsVisible = !_guidedMappingActive;
+        _reviewMapping.IsVisible = _draftProfile?.Bindings.Count > 0 && !_guidedMappingActive;
+        _guidedPromptText.IsVisible = _guidedMappingActive || _mappingNotice || _selectedDevice == null || !_deviceConnected;
         _calibrationTargetBox.IsEnabled = _session != null;
         var other = _sessions.Values.Count(x => x != _session && x.IsDirty);
         _saveState.Text = (_session?.IsDirty == true ? "Unsaved changes" : _session == null ? "No controller selected" : "Saved") + (other > 0 ? $" · {other} other unsaved controller(s)" : "");
@@ -76,7 +80,7 @@ internal sealed partial class MainWindow
     private void UndoEdit(bool redo)
     {
         if (_session == null) return;
-        StopGuidedMapping("Editing history restored.");
+        StopGuidedMapping("Editing history restored.", false);
         if (redo) _session.Redo(); else _session.Undo();
         RestoreSession();
     }
@@ -292,7 +296,7 @@ internal sealed partial class MainWindow
         _rangeReview = false;
         ApplyCalibration();
         _calibrationStage = CalibrationStage.Idle;
-        _calibrationStep.Text = "Range accepted into draft. Save changes when ready.";
+        _calibrationStep.Text = "Range accepted into draft.";
         UpdateCalibrationControls();
         SchedulePreview();
     }
@@ -310,7 +314,7 @@ internal sealed partial class MainWindow
     {
         _calibrationOutputLabel.Text = "Draft output";
         _calibrationOutputLabel.Foreground = CopperTheme.Muted;
-        _calibrationLegend.Text = "Gray: raw · Copper: adjusted · Shaded: deadzone";
+        _calibrationLegend.Text = "Adjusted";
         var binding = GetCalibrationBinding();
         if (binding == null || _lastReport == null || !SourceFitsReport(binding.Source, _lastReport))
         {
@@ -324,7 +328,7 @@ internal sealed partial class MainWindow
         {
             var pressed = ProfileControllerMapper.ReadButtonSource(binding.Source, _lastReport, _lastReport.Length) ? 1d : 0d;
             _calibrationGraph.Update(pressed, pressed, 0, true);
-            _calibrationValues.Text = $"Raw {raw} · Input {pressed:0.000} · Adjusted {pressed:0.000}";
+            _calibrationValues.Text = $"Raw {raw} · Adjusted {pressed:0.000}";
             return;
         }
         var draftAxis = binding.Axis ?? new AxisCalibration();
@@ -336,7 +340,7 @@ internal sealed partial class MainWindow
             axis = captured!;
             _calibrationOutputLabel.Text = "Capture preview · Not applied";
             _calibrationOutputLabel.Foreground = CopperTheme.Warning;
-            _calibrationLegend.Text = "Gray: raw · Copper: capture preview · Shaded: deadzone";
+            _calibrationLegend.Text = "Capture preview";
         }
         else if (_rangeReview || _calibrationActive)
         {
@@ -346,7 +350,8 @@ internal sealed partial class MainWindow
         var input = trigger ? InputNormalization.NormalizeTrigger(raw, axis.Minimum, axis.Maximum, 0, 1) : InputNormalization.NormalizeAxis(raw, axis.Minimum, axis.Maximum, axis.Center, false, 0, 1);
         var output = CalibrationOutput(binding, raw, axis);
         _calibrationGraph.Update(input, output, axis.Deadzone, trigger, CalibrationTarget is ControllerElement.LeftStickY or ControllerElement.RightStickY);
-        _calibrationValues.Text = $"Raw {raw}   ·   Input {input:0.000}   ·   {(capturePreview ? "Preview" : "Adjusted")} {output:0.000}" +
+        ToolTip.SetTip(_calibrationValues, $"Raw source: {raw}. Normalized input: {input:0.000}.");
+        _calibrationValues.Text = $"Raw {raw}   ·   {(capturePreview ? "Preview" : "Adjusted")} {output:0.000}" +
             (capturePreview ? $"\nCurrent draft output {CalibrationOutput(binding, raw, draftAxis):0.000}" : "");
     }
 
@@ -356,8 +361,11 @@ internal sealed partial class MainWindow
         _calibrationGraph.Update(0, 0, 0, false);
         _leftStick.SetPosition(0, 0); _rightStick.SetPosition(0, 0);
         _leftTrigger.Value = _rightTrigger.Value = 0;
+        _leftStickValues.Text = _rightStickValues.Text = "X —   Y —";
+        _leftTriggerValue.Text = _rightTriggerValue.Text = "—";
         foreach (var target in _indicators.Keys) SetIndicator(target, false);
         _liveNumbers.Text = _stateText.Text = "Waiting for controller input.";
+        _liveNumbers.IsVisible = _stateText.IsVisible = true;
         _rawHexText.Text = _changedBytesText.Text = _reportRateText.Text = "";
     }
 }

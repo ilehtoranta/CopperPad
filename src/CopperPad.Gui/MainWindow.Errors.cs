@@ -84,7 +84,7 @@ internal sealed partial class MainWindow
     private void ShowCaptureError(string message, bool advanced = false)
     {
         var deviceId = _selectedDevice?.Id;
-        _guidedPromptText.Text = message;
+        SetMappingPrompt(message, true);
         _guidedPromptText.Foreground = CopperTheme.Error;
         ShowUiError("capture", deviceId, "Input capture unavailable", message, message, advanced ? "Go to Advanced" : "Go to Mapping", () => {
             NavigateToError(deviceId, 1);

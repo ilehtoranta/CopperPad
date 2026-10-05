@@ -90,17 +90,17 @@ internal sealed partial class MainWindow
                 if (!CaptureCalibrationCenter()) return;
                 _rangeReview = true;
                 _calibrationStage = CalibrationStage.RestCaptured;
-                _calibrationStep.Text = "Rest captured. Start range capture, then move to every limit.";
+                _calibrationStep.Text = "Rest captured. Start recording the full range.";
                 break;
             case CalibrationStage.RestCaptured:
                 if (!StartCalibrationCapture()) return;
                 _calibrationStage = CalibrationStage.Capturing;
-                _calibrationStep.Text = "Recording… Move through the full range, then review.";
+                _calibrationStep.Text = "Recording… Move to every limit.";
                 break;
             case CalibrationStage.Capturing:
                 StopCalibrationCapture();
                 _calibrationStage = CalibrationStage.Review;
-                _calibrationStep.Text = "Review the captured range. Accept it or retry.";
+                _calibrationStep.Text = "Check the preview, then accept or retry.";
                 break;
             case CalibrationStage.Review:
                 AcceptCalibrationRange();
@@ -131,7 +131,7 @@ internal sealed partial class MainWindow
         _rangeReview = false;
         ClearUiError("calibration", _selectedDevice?.Id);
         LoadCalibrationFromTarget();
-        _calibrationStep.Text = "Capture cancelled. Your existing calibration is unchanged.";
+        _calibrationStep.Text = "Capture cancelled. Existing calibration retained.";
         SchedulePreview();
         UpdateEditorState();
     }
@@ -140,6 +140,7 @@ internal sealed partial class MainWindow
     {
         var binding = GetCalibrationBinding();
         var analog = binding != null && IsAnalogSource(binding);
+        UpdateCalibrationSteps(analog);
         _calibrationAction.Content = _calibrationStage switch
         {
             CalibrationStage.RestCaptured => "Start range capture",

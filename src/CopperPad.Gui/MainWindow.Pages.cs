@@ -33,7 +33,7 @@ internal sealed partial class MainWindow
         _saveAllButton.Click += async (_, _) => await SaveAllDraftsAsync();
         _revertButton.Click += (_, _) => {
             if (_session == null) return;
-            StopGuidedMapping("Changes reverted."); _session.Revert(); ClearEditingErrors(_session.Device.Id); RestoreSession(); ApplyDeviceFilter();
+            StopGuidedMapping("Changes reverted.", false); _session.Revert(); ClearEditingErrors(_session.Device.Id); RestoreSession(); ApplyDeviceFilter();
         };
         var actions = Actions(_saveAllButton, _revertButton, _saveProfileButton);
         Grid.SetColumn(actions, 1); save.Children.Add(actions);
@@ -87,7 +87,7 @@ internal sealed partial class MainWindow
         _connectionBadge.VerticalAlignment = VerticalAlignment.Top;
         _connectionBadge.Child = _deviceSubtitle;
         Grid.SetColumn(_connectionBadge, 1); title.Children.Add(_connectionBadge); header.Children.Add(title);
-        _setupButton.Click += (_, _) => { _tabs.SelectedIndex = 1; _guidedPromptText.Text = "Start guided setup, or remap individual controls below."; };
+        _setupButton.Click += (_, _) => { _tabs.SelectedIndex = 1; _startGuidedMappingButton.Focus(); };
         _setupButton.MinHeight = 30; _setupButton.FontSize = 13; _setupButton.Padding = new Thickness(10, 5);
         _previewText.FontSize = 13; _previewText.VerticalAlignment = VerticalAlignment.Center;
         var details = new Grid { ColumnDefinitions = new("*,Auto"), ColumnSpacing = 10 };
@@ -112,12 +112,15 @@ internal sealed partial class MainWindow
 
     private Control BuildTestTab()
     {
-        var panel = Page("Test", "Press buttons and move the sticks to check the active mapping.");
-        var toggle = new CheckBox { Content = "Use labeled control grid" };
+        var panel = Page("Test");
+        var toggle = new CheckBox { Content = "Control grid" };
         var grid = BuildControlGrid(); grid.IsVisible = false;
         _gamepadCard = Card(_gamepad);
         toggle.IsCheckedChanged += (_, _) => { grid.IsVisible = toggle.IsChecked == true; _gamepadCard.IsVisible = toggle.IsChecked != true; };
-        panel.Children.Add(toggle); panel.Children.Add(_liveNumbers); panel.Children.Add(_gamepadCard); panel.Children.Add(grid);
+        var toolbar = new Grid { ColumnDefinitions = new("*,Auto") }; toolbar.Children.Add(toggle);
+        var help = HelpButton("Test", "Press buttons and move the sticks to test the active mapping. Values appear beside each stick and trigger. Use Control grid for a labeled view of nonstandard controllers.");
+        Grid.SetColumn(help, 1); toolbar.Children.Add(help);
+        panel.Children.Add(toolbar); panel.Children.Add(_liveNumbers); panel.Children.Add(_gamepadCard); panel.Children.Add(grid);
         return Scroll(panel);
     }
 
@@ -132,7 +135,7 @@ internal sealed partial class MainWindow
         name.Children.Add(new TextBlock { Text = "Custom profile", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0) });
         Grid.SetColumn(_profileName, 1); name.Children.Add(_profileName); header.Children.Add(name);
         _profileNameError.Foreground = CopperTheme.Error; _profileNameError.IsVisible = false; header.Children.Add(_profileNameError);
-        _guidedPromptText.Text = "Use guided setup, or remap one control below."; _guidedPromptText.FontSize = 15;
+        SetMappingPrompt("Use guided setup, or remap one control below."); _guidedPromptText.FontSize = 15;
         _guidedProgress.Foreground = CopperTheme.Copper; _guidedProgress.IsVisible = false;
         _startGuidedMappingButton.Content = "Guided setup"; _startGuidedMappingButton.Classes.Add("primary");
         _startGuidedMappingButton.Click += (_, _) => StartGuidedMapping();
@@ -141,13 +144,17 @@ internal sealed partial class MainWindow
         _backGuided.Click += (_, _) => RestartGuidedTarget(Math.Max(0, _guidedTargetIndex - 1));
         _retryGuided.Click += (_, _) => RestartGuidedTarget(_guidedTargetIndex);
         _backGuided.IsVisible = _retryGuided.IsVisible = _skipGuidedMappingButton.IsVisible = _stopGuidedMappingButton.IsVisible = false;
-        var guided = new StackPanel { Spacing = 3, Children = { _guidedProgress, _guidedPromptText,
-            Actions(_startGuidedMappingButton, _backGuided, _retryGuided, _skipGuidedMappingButton, _stopGuidedMappingButton, Button("Review in Test →", (_, _) => { StopGuidedMapping("Review your assignments in Test."); _tabs.SelectedIndex = 0; })) } };
-        header.Children.Add(guided);
+        _reviewMapping.Click += (_, _) => _tabs.SelectedIndex = 0;
         _undoButton.Click += (_, _) => UndoEdit(false); _redoButton.Click += (_, _) => UndoEdit(true);
-        _clearAllButton.Click += (_, _) => ClearBindings();
-        _openAdvancedButton.Click += (_, _) => { _advancedEditor.IsExpanded = true; _advancedEditor.BringIntoView(); };
-        header.Children.Add(Actions(_undoButton, _redoButton, _clearAllButton, _openAdvancedButton));
+        UseIcon(_undoButton, "Undo (Ctrl+Z)", "M 8,2 L 2,8 L 8,14 M 2,8 L 12,8 C 22,8 22,20 12,20");
+        UseIcon(_redoButton, "Redo (Ctrl+Y)", "M 14,2 L 20,8 L 14,14 M 20,8 L 10,8 C 0,8 0,20 10,20");
+        _mappingMore.Flyout = new Flyout { Content = new StackPanel { Spacing = 4, Children = { _clearAllButton, _openAdvancedButton } } };
+        _clearAllButton.Click += (_, _) => { _mappingMore.Flyout.Hide(); ClearBindings(); };
+        _openAdvancedButton.Click += (_, _) => { _mappingMore.Flyout.Hide(); _advancedEditor.IsExpanded = true; RevealErrorControl(_offsetBox); };
+        var guided = new StackPanel { Spacing = 3, Children = { _guidedProgress, _guidedPromptText,
+            Actions(_startGuidedMappingButton, _backGuided, _retryGuided, _skipGuidedMappingButton, _stopGuidedMappingButton, _reviewMapping, _undoButton, _redoButton, _mappingMore,
+                HelpButton("Mapping", "Guided setup walks through the remaining controls. Remap captures one control. A check marks an assigned control; unassigned controls are optional. Open an assigned control’s details to inspect its raw source. More contains Clear all and the Advanced editor.")) } };
+        header.Children.Add(guided);
         header.Children.Add(_validationText); root.Children.Add(header);
         var body = new StackPanel { Spacing = 8, Children = { _mappingRows } };
         _targetBox.ItemsSource = MappingTargetItem.All; _targetBox.SelectedIndex = 0;
@@ -170,28 +177,32 @@ internal sealed partial class MainWindow
 
     private Control BuildCalibrationTab()
     {
-        var panel = Page("Calibration", "Tune mapped analog controls. Changes update your draft immediately.");
+        var panel = Page("Calibration");
         _calibrationTargetBox.ItemsSource = AxisTargets.Select(x => new MappingTargetItem(x)).ToArray();
         _calibrationTargetBox.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<MappingTargetItem>((item, _) => Text(item == null ? "" : Friendly(item.Element)));
         _calibrationTargetBox.SelectedIndex = 0;
         _calibrationTargetBox.SelectionChanged += (_, _) => { _rangeReview = false; LoadCalibrationFromTarget(); UpdateEditorState(); SchedulePreview(); };
-        var selector = new Grid { ColumnDefinitions = new("Auto,*") };
+        var selector = new Grid { ColumnDefinitions = new("Auto,*,Auto"), ColumnSpacing = 6 };
         selector.Children.Add(new TextBlock { Text = "Axis / trigger", VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) });
         Avalonia.Automation.AutomationProperties.SetName(_calibrationTargetBox, "Axis / trigger");
-        Grid.SetColumn(_calibrationTargetBox, 1); selector.Children.Add(_calibrationTargetBox); panel.Children.Add(selector);
+        Grid.SetColumn(_calibrationTargetBox, 1); selector.Children.Add(_calibrationTargetBox);
+        var help = HelpButton("Calibration", "Capture the control at rest, record its full range, then review and accept. Capture remains temporary until accepted. Deadzone and saturation adjustments update the draft immediately. Save changes to keep them.");
+        Grid.SetColumn(help, 2); selector.Children.Add(help); panel.Children.Add(selector);
         _calibrationStatusText.Foreground = CopperTheme.Error; _calibrationStatusText.IsVisible = false; panel.Children.Add(_calibrationStatusText);
         _calibrationAction.Classes.Add("primary"); _calibrationAction.Click += (_, _) => AdvanceCalibration();
         _cancelCalibration.Click += (_, _) => CancelCalibration(); _retryCalibration.Click += (_, _) => RetryCalibrationRange();
         _mapCalibrationAxis.Click += (_, _) => {
             _tabs.SelectedIndex = 1; SetSelectedTarget(CalibrationTarget); _advancedEditor.IsExpanded = true; _advancedEditor.BringIntoView();
-            _guidedPromptText.Text = $"Assign {Friendly(CalibrationTarget)} using Remap, or Assign input in Advanced.";
+            SetMappingPrompt($"Assign {Friendly(CalibrationTarget)} using Remap or Advanced.", true);
         };
         _resetAxis.Click += (_, _) => ResetCalibration();
-        var workflow = new StackPanel { Spacing = 5, Children = { Heading("Range capture", 16), _calibrationStep,
+        var workflow = new StackPanel { Spacing = 10, Children = { BuildCalibrationSteps(), _calibrationStep,
             Actions(_calibrationAction, _mapCalibrationAxis, _retryCalibration, _cancelCalibration), _calibrationPreviewText } };
         _calibrationValues.FontSize = 12;
         _calibrationLegend.FontSize = 12; _calibrationOutputLabel.FontSize = 12;
-        var readout = Card(new StackPanel { Spacing = 4, Children = { _calibrationOutputLabel, _calibrationGraph, _calibrationLegend, _calibrationValues } });
+        var legend = new WrapPanel { Children = { LegendItem(CopperTheme.Muted, Text("Raw")), LegendItem(CopperTheme.Copper, _calibrationLegend, true), LegendItem(CopperTheme.Line, Text("Deadzone")) } };
+        ToolTip.SetTip(legend, "The filled marker is raw input; the copper ring is adjusted output. The shaded area is the deadzone.");
+        var readout = Card(new StackPanel { Spacing = 6, Children = { _calibrationOutputLabel, _calibrationGraph, legend, _calibrationValues } });
         var range = new Grid { ColumnDefinitions = new("*,*"), ColumnSpacing = 12 };
         range.Children.Add(workflow); Grid.SetColumn(readout, 1); range.Children.Add(readout);
         range.SizeChanged += (_, _) => {
@@ -212,18 +223,18 @@ internal sealed partial class MainWindow
         Avalonia.Automation.AutomationProperties.SetName(_saturationSlider, "Saturation");
         Avalonia.Automation.AutomationProperties.SetName(_saturationNumber, "Saturation value");
         var settings = new WrapPanel();
-        settings.Children.Add(LabeledControl("Deadzone", new StackPanel { Children = { Actions(_deadzoneSlider, _deadzoneNumber), Text("Ignore small movements near rest.") } }));
-        settings.Children.Add(LabeledControl("Saturation", new StackPanel { Children = { Actions(_saturationSlider, _saturationNumber), Text("Reach full output before the limit.") } }));
+        settings.Children.Add(new StackPanel { Spacing = 5, Margin = new Thickness(0, 8, 16, 8), Children = { Actions(Text("Deadzone"), HelpButton("Deadzone", "Ignore small movements near rest. Increase the deadzone if a centered stick drifts.")), Actions(_deadzoneSlider, _deadzoneNumber) } });
+        settings.Children.Add(new StackPanel { Spacing = 5, Margin = new Thickness(0, 8, 0, 8), Children = { Actions(Text("Saturation"), HelpButton("Saturation", "Reach full output before the physical limit. Lower saturation if the control cannot reach full output.")), Actions(_saturationSlider, _saturationNumber) } });
         panel.Children.Add(settings); panel.Children.Add(Actions(_invertCheck, _resetAxis));
         return Scroll(panel);
     }
 
     private Control BuildReportsTab()
     {
-        var panel = Page("Diagnostics", "Inspect the selected device’s HID reports and descriptor.");
+        var panel = Page("Diagnostics");
         var pause = Button("Pause reports", (_, _) => { });
         pause.Click += (_, _) => { _diagnosticsPaused = !_diagnosticsPaused; pause.Content = _diagnosticsPaused ? "Resume reports" : "Pause reports"; };
-        panel.Children.Add(Actions(pause, Button("Copy report", async (_, _) => { if (Clipboard != null) await Clipboard.SetTextAsync(_rawHexText.Text ?? ""); }), Button("Copy details", async (_, _) => { if (Clipboard != null) await Clipboard.SetTextAsync(_descriptorText.Text ?? ""); })));
+        panel.Children.Add(Actions(pause, Button("Copy report", async (_, _) => { if (Clipboard != null) await Clipboard.SetTextAsync(_rawHexText.Text ?? ""); }), Button("Copy details", async (_, _) => { if (Clipboard != null) await Clipboard.SetTextAsync(_descriptorText.Text ?? ""); }), HelpButton("Diagnostics", "Inspect raw HID reports, changed bytes, and device details. Pause freezes the displayed reports; live controller input continues.")));
         panel.Children.Add(_reportRateText); panel.Children.Add(_changedBytesText);
         panel.Children.Add(Heading("Raw input report", 17)); panel.Children.Add(Card(_rawHexText));
         panel.Children.Add(Heading("Device details & descriptor", 17)); panel.Children.Add(Card(_descriptorText));
@@ -237,27 +248,47 @@ internal sealed partial class MainWindow
         {
             var rows = new StackPanel { Spacing = 3 };
             var assigned = group.Count(target => _draftProfile?.Bindings.Any(x => x.Target == target) == true);
-            var expander = new Expander { Header = $"{group.Key} · {assigned}/{group.Count()} assigned", HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+            var expander = new Expander { Header = $"{group.Key} · {assigned}/{group.Count()}", HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
                 IsExpanded = _mappingGroupStates.GetValueOrDefault(group.Key, group.Key == "Buttons") || _guidedMappingActive && group.Contains(ProfileEditor.MappableTargets[_guidedTargetIndex]), Content = rows };
             expander.PropertyChanged += (_, e) => { if (e.Property == Expander.IsExpandedProperty) _mappingGroupStates[group.Key] = expander.IsExpanded; };
+            ToolTip.SetTip(expander, $"{assigned} of {group.Count()} controls assigned. Unassigned controls are optional.");
+            Avalonia.Automation.AutomationProperties.SetName(expander, $"{group.Key}: {assigned} of {group.Count()} assigned");
             foreach (var target in group)
             {
                 var binding = _draftProfile?.Bindings.FirstOrDefault(x => x.Target == target);
                 var row = new Grid { ColumnDefinitions = new("*,Auto") };
-                var label = new StackPanel { Spacing = 1, Children = { Text(Friendly(target)), new TextBlock { Text = binding == null ? "Unassigned · optional" : ReportAnalyzer.FormatSource(binding.Source), FontSize = 12, Foreground = binding == null ? CopperTheme.Muted : CopperTheme.Success, TextWrapping = TextWrapping.Wrap } } };
+                var label = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center, Children = { Text(Friendly(target)) } };
+                var status = Text(binding == null ? "—" : "✓"); status.Foreground = binding == null ? CopperTheme.Muted : CopperTheme.Success;
+                Avalonia.Automation.AutomationProperties.SetName(status, $"{Friendly(target)}: {(binding == null ? "Unassigned, optional" : "Assigned")}");
+                var title = new Grid { ColumnDefinitions = new("Auto,*"), ColumnSpacing = 8, VerticalAlignment = VerticalAlignment.Center };
+                title.Children.Add(status); Grid.SetColumn(label, 1); title.Children.Add(label);
+                ToolTip.SetTip(title, binding == null ? "Unassigned · Optional" : "Assigned");
                 if (binding != null && _draftProfile != null && _selectedDevice != null)
                 {
                     var issues = ProfileEditor.ValidateProfile(_draftProfile with { Name = "Row validation", Bindings = new[] { binding } }, _selectedDevice.MaxInputReportLength);
                     foreach (var issue in issues) label.Children.Add(new TextBlock { Text = issue.Message, Foreground = CopperTheme.Error, TextWrapping = TextWrapping.Wrap });
                 }
-                row.Children.Add(label);
+                row.Children.Add(title);
                 var remap = Button("Remap", (_, _) => RemapControl(target)); remap.IsEnabled = _selectedDevice != null && !_guidedMappingActive;
                 Avalonia.Automation.AutomationProperties.SetName(remap, $"Remap {Friendly(target)}");
                 var clear = Button("Clear", (_, _) => { SetSelectedTarget(target); RemoveSelectedBinding(); }); clear.IsEnabled = binding != null && !_guidedMappingActive;
                 Avalonia.Automation.AutomationProperties.SetName(clear, $"Clear {Friendly(target)}");
+                clear.IsVisible = binding != null;
                 remap.MinHeight = clear.MinHeight = 30; remap.Padding = clear.Padding = new Thickness(10, 5);
                 var actions = Actions(remap, clear); Grid.SetColumn(actions, 1); row.Children.Add(actions);
-                var card = Card(row); card.Padding = new Thickness(8, 5);
+                Control rowContent = row;
+                if (binding != null)
+                {
+                    var details = new Expander { Header = "Source details", FontSize = 12, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch,
+                        BorderThickness = new Thickness(0), Padding = new Thickness(0), Background = Brushes.Transparent,
+                        Content = new TextBlock { Text = ReportAnalyzer.FormatSource(binding.Source), FontFamily = new FontFamily("Consolas, monospace"), FontSize = 12, TextWrapping = TextWrapping.Wrap } };
+                    // Only assigned rows have source details; their summary remains a single line.
+                    details.Header = row; rowContent = details;
+                    details.Classes.Add("binding-row");
+                    Avalonia.Automation.AutomationProperties.SetName(details, $"Source details for {Friendly(target)}");
+                }
+                var card = Card(rowContent); card.Padding = new Thickness(8, 5);
+                Avalonia.Automation.AutomationProperties.SetName(card, $"{Friendly(target)}: {(binding == null ? "Unassigned, optional" : "Assigned")}");
                 if (_guidedMappingActive && target == ProfileEditor.MappableTargets[_guidedTargetIndex]) { card.BorderBrush = CopperTheme.Copper; card.BorderThickness = new Thickness(2); }
                 rows.Children.Add(card);
                 if (_guidedMappingActive && target == ProfileEditor.MappableTargets[_guidedTargetIndex])
@@ -279,7 +310,12 @@ internal sealed partial class MainWindow
     };
     private static TextBlock Text(string value) => new() { Text = value, TextWrapping = TextWrapping.Wrap };
     private static TextBlock Heading(string value, double size) => new() { Text = value, FontSize = size, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 4) };
-    private static StackPanel Page(string title, string help) => new() { Spacing = 8, Margin = new Thickness(12), Children = { new TextBlock { Text = help, TextWrapping = TextWrapping.Wrap, Foreground = CopperTheme.Muted } } };
+    private static StackPanel Page(string title)
+    {
+        var panel = new StackPanel { Spacing = 8, Margin = new Thickness(12) };
+        Avalonia.Automation.AutomationProperties.SetName(panel, title + " page");
+        return panel;
+    }
     private static ScrollViewer Scroll(Control content) => new() { Content = content, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     private static Border Card(Control content) => new() { Background = CopperTheme.Surface, BorderBrush = CopperTheme.Line, BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(8), Padding = new Thickness(10), Child = content };
     private static WrapPanel Actions(params Control[] controls)
@@ -301,17 +337,17 @@ internal sealed partial class MainWindow
 			ColumnDefinitions = new ColumnDefinitions("*,*"),
 			Margin = new Thickness(0, 0, 0, 16)
 		};
-		triggerPanel.Children.Add(LabeledControl("Left trigger", _leftTrigger));
-		var rightTrigger = LabeledControl("Right trigger", _rightTrigger);
+        triggerPanel.Children.Add(LabeledControl("Left trigger", new StackPanel { Spacing = 4, Children = { _leftTrigger, _leftTriggerValue } }));
+        var rightTrigger = LabeledControl("Right trigger", new StackPanel { Spacing = 4, Children = { _rightTrigger, _rightTriggerValue } });
 		Grid.SetColumn(rightTrigger, 1);
 		triggerPanel.Children.Add(rightTrigger);
 		Grid.SetColumnSpan(triggerPanel, 2);
 		root.Children.Add(triggerPanel);
 
-		var leftStickPanel = LabeledControl("Left stick", _leftStick);
+        var leftStickPanel = LabeledControl("Left stick", new StackPanel { Spacing = 4, Children = { _leftStick, _leftStickValues } });
 		Grid.SetRow(leftStickPanel, 1);
 		root.Children.Add(leftStickPanel);
-		var rightStickPanel = LabeledControl("Right stick", _rightStick);
+        var rightStickPanel = LabeledControl("Right stick", new StackPanel { Spacing = 4, Children = { _rightStick, _rightStickValues } });
 		Grid.SetColumn(rightStickPanel, 1);
 		Grid.SetRow(rightStickPanel, 1);
 		root.Children.Add(rightStickPanel);

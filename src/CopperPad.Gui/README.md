@@ -6,6 +6,10 @@ The charcoal-and-copper workspace keeps controller selection, navigation, and sa
 
 The compact header shows the selected controller, a connection badge, and the active mapping source. Save state appears in the save bar; connection transport and full mapping details are in Diagnostics. Branding stays in the sidebar, and the footer appears only for action feedback.
 
+The workspace keeps static explanations in keyboard-accessible **?** help popovers. Mapping rows use a check for assigned controls and a dash for optional unassigned controls, with totals in the group headings. Assigned rows expand to show raw source details and offer Clear; **More…** contains Clear all and Advanced. Undo/redo use labeled, focusable icon buttons. Active capture instructions and validation errors stay visible.
+
+Test places accessible numeric readings beside the diagram’s stick plots and trigger meters; **Control grid** provides the alternate labeled view with local readings. Calibration uses a **Rest → Range → Review** strip, one current instruction, and labeled raw/adjusted/deadzone markers. Deadzone and saturation explanations are available beside their controls.
+
 Edits are in-memory drafts. Device refresh, switching, and reconnecting the same device retain drafts for the current app session. Valid edits are previewed locally after a short debounce; **Save changes** writes the existing profile document. **Revert** restores the baseline. Closing with unsaved changes offers Save all, Discard, and Cancel. Drafts do not survive an app crash or discarded close.
 
 Disconnected controllers with unsaved edits stay in the sidebar for editing, saving, or reverting. Their undo/redo history remains accessible through refresh; device filters also retain edited HID devices. A reader or preview failure cannot prevent restoring the editor. **Save all changes** appears when other controllers have pending edits. A custom mapping needs at least one assignment before it can be saved or previewed, so editing a name cannot replace a working built-in mapping with an empty override. Validation stays beside the profile name, assignments, and advanced fields.

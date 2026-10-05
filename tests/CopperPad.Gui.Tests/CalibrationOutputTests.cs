@@ -94,7 +94,7 @@ public sealed partial class WorkspaceTests
             Assert.Equal(0, GraphOutput(window), 12);
             Assert.Equal("Capture preview · Not applied", Field<TextBlock>(window, "_calibrationOutputLabel").Text);
             Assert.Contains($"Current draft output {expected:0.000}", Field<TextBlock>(window, "_calibrationValues").Text);
-            Assert.Contains("capture preview", Field<TextBlock>(window, "_calibrationLegend").Text);
+            Assert.Equal("Capture preview", Field<TextBlock>(window, "_calibrationLegend").Text);
             Assert.Same(original, editor.Draft);
             AssertVisibleInWindow(window, Field<TextBlock>(window, "_calibrationOutputLabel"));
             AssertVisibleInWindow(window, Field<TextBlock>(window, "_calibrationValues"));

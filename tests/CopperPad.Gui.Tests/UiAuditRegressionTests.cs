@@ -315,7 +315,7 @@ public sealed partial class WorkspaceTests
             window.Width = 900; window.Height = 600;
             var root = (Grid)window.Content!;
             root.Children.OfType<Grid>().Single(x => x.ColumnDefinitions.Count == 3).ColumnDefinitions[0].Width = new GridLength(180);
-            var toggle = window.GetVisualDescendants().OfType<CheckBox>().Single(x => Equals(x.Content, "Use labeled control grid"));
+            var toggle = window.GetVisualDescendants().OfType<CheckBox>().Single(x => Equals(x.Content, "Control grid"));
             toggle.IsChecked = true;
             Assert.False(Field<Border>(window, "_gamepadCard").IsVisible);
             window.GetVisualDescendants().OfType<Expander>().Single(x => Equals(x.Header, "Options")).IsExpanded = true;

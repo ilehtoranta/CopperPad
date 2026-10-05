@@ -265,7 +265,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 		_guidedReleaseSource = null;
 		_guidedReleaseBaselineReport = null;
 		UpdateGuidedButtons();
-		_guidedPromptText.Text = device == null ? "Connect a controller to map its controls." : connected ? "Use guided setup, or remap one control below." : "Reconnect this controller to capture input. You can still edit or save its draft.";
+        SetMappingPrompt(device == null ? "Connect a controller to map its controls." : connected ? "Use guided setup, or remap one control below." : "Reconnect to capture input. Your draft is editable.");
         _guidedPromptText.Foreground = CopperTheme.Muted;
 		if (device == null)
 		{
@@ -423,10 +423,11 @@ internal sealed partial class MainWindow : Window, IDisposable
             _lastReport = null;
             lock (_rawReportGate) _pendingRawReport = null;
             if (_guidedMappingActive) StopGuidedMapping("Controller disconnected. Completed assignments retained; reconnect to continue.");
-            else _guidedPromptText.Text = "Reconnect this controller to capture input. You can still edit or save its draft.";
+            else SetMappingPrompt("Reconnect to capture input. Your draft is editable.");
             if (_rangeReview || _calibrationActive) CancelCalibration();
             UpdateConnectionBadge(false);
             _liveNumbers.Text = _stateText.Text = "Controller disconnected. Reconnect to test input.";
+            _liveNumbers.IsVisible = _stateText.IsVisible = true;
             UpdateCalibrationControls();
             UpdateCalibrationGraph();
             if (connectionChanged)
@@ -467,7 +468,11 @@ internal sealed partial class MainWindow : Window, IDisposable
 		SetIndicator(ControllerElement.DPadRight, state.IsPressed(ControllerElement.DPadRight));
 		_stateText.Text =
 			$"LX {leftX:0.00}  LY {leftY:0.00}  RX {rightX:0.00}  RY {rightY:0.00}  LT {leftTrigger:0.00}  RT {rightTrigger:0.00}";
-		_liveNumbers.Text = _stateText.Text;
+        _liveNumbers.IsVisible = _stateText.IsVisible = false;
+        _leftStickValues.Text = $"X {leftX:0.00}   Y {leftY:0.00}";
+        _rightStickValues.Text = $"X {rightX:0.00}   Y {rightY:0.00}";
+        _leftTriggerValue.Text = $"{leftTrigger:0.00}";
+        _rightTriggerValue.Text = $"{rightTrigger:0.00}";
 		if (!string.IsNullOrWhiteSpace(state.Diagnostic))
 		{
 			SetStatus(state.Diagnostic);
@@ -589,7 +594,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 		AdvanceGuidedTarget();
 	}
 
-	private void StopGuidedMapping(string message)
+	private void StopGuidedMapping(string message, bool showNotice = true)
 	{
 		_guidedMappingActive = false;
         _guidedSingleTarget = false;
@@ -608,7 +613,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 		_gamepad.Highlight = null;
         _guidedProgress.Text = "";
         RenderMappingRows();
-		_guidedPromptText.Text = message;
+        SetMappingPrompt(message, showNotice);
         _guidedPromptText.Foreground = CopperTheme.Muted;
 		SchedulePreview();
 		SetCaptureStatus(message, ExplicitCaptureStatusHold);
@@ -846,7 +851,7 @@ internal sealed partial class MainWindow : Window, IDisposable
     {
         if (_guidedSingleTarget)
         {
-            StopGuidedMapping($"{Friendly(ProfileEditor.MappableTargets[_guidedTargetIndex])} assigned. Review the result in Test.");
+            StopGuidedMapping($"{Friendly(ProfileEditor.MappableTargets[_guidedTargetIndex])} assigned.");
             return;
         }
         _guidedTargetIndex++;
@@ -857,7 +862,8 @@ internal sealed partial class MainWindow : Window, IDisposable
 		_ignoreSuggestionButton.IsEnabled = false;
 		if (_guidedTargetIndex >= ProfileEditor.MappableTargets.Count)
 		{
-			StopGuidedMapping($"Mapping complete: {_draftProfile?.Bindings.Count ?? 0} assigned. Unassigned controls are optional. Review the controls below, then open Test.");
+            var assigned = ProfileEditor.MappableTargets.Count(target => _draftProfile?.Bindings.Any(binding => binding.Target == target) == true);
+            StopGuidedMapping($"Setup complete · {assigned} assigned · {ProfileEditor.MappableTargets.Count - assigned} skipped.");
 			return;
 		}
 
@@ -902,25 +908,25 @@ internal sealed partial class MainWindow : Window, IDisposable
 		SetSelectedTarget(target);
 		if (_guidedArming)
 		{
-			_guidedPromptText.Text = "Release all controls. Measuring neutral input...";
+            SetMappingPrompt("Release all controls. Measuring neutral input…");
 			return;
 		}
 
 		if (_guidedWaitingForNeutral)
 		{
-			_guidedPromptText.Text = $"Assigned {Friendly(target)}. Release the control to finish this step, or choose Continue.";
+            SetMappingPrompt($"Assigned {Friendly(target)}. Release the control or choose Continue.");
 			SetCaptureStatus($"Locked {target}. Release controls or click Continue.", ExplicitCaptureStatusHold);
 			return;
 		}
 
 		if (!_guidedReadyPromptShown)
 		{
-			_guidedPromptText.Text = $"Get ready: {GetGuidedActionText(target)}. Wait for the next prompt.";
+            SetMappingPrompt($"Get ready: {GetGuidedActionText(target)}. Wait for the prompt.");
 			SetCaptureStatus("Ignoring early changes while you get ready.", ExplicitCaptureStatusHold);
 			return;
 		}
 
-		_guidedPromptText.Text = $"Do this now: {GetGuidedActionText(target)}";
+        SetMappingPrompt($"Do this now: {GetGuidedActionText(target)}");
 		SetCaptureStatus($"Waiting for {MappingTargetItem.All[_guidedTargetIndex]}...", ExplicitCaptureStatusHold);
 	}
 
@@ -1000,7 +1006,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 			return;
 		}
 
-		StopGuidedMapping("Bindings cleared. Undo restores the previous assignments.");
+		StopGuidedMapping("Bindings cleared. Undo restores the previous assignments.", false);
 		_draftProfile = _draftProfile with { Bindings = [] };
 		_guidedIgnoredSourceKeys.Clear();
 		_guidedCapture.Reset();
@@ -1206,7 +1212,7 @@ internal sealed partial class MainWindow : Window, IDisposable
 		_saturationNumber.Value = (decimal)_saturationSlider.Value;
 		_loadingCalibration = false;
         _calibrationStage = CalibrationStage.Idle;
-        _calibrationStep.Text = "Capture rest, then move through the full range.";
+        _calibrationStep.Text = "Release the control, then capture rest.";
 		_calibrationStatusText.Text = "";
         _calibrationStatusText.IsVisible = false;
         UpdateCalibrationControls();
@@ -1254,7 +1260,8 @@ internal sealed partial class MainWindow : Window, IDisposable
         _validationText.Text = _session == null ? "Select a controller to edit its mapping." :
             !_session.IsDirty && _draftProfile?.Bindings.Count == 0 ? "Built-in mapping is active. Assign controls to create a custom mapping." :
             issues.Count > 0 ? string.Join("\n", issues.Select(x => x.Message)) : $"{_draftProfile?.Bindings.Count} assigned · Other controls are optional";
-        _validationText.Foreground = _session?.IsDirty == true && issues.Count > 0 ? CopperTheme.Error : CopperTheme.Muted;
+        _validationText.Foreground = issues.Count > 0 && (_session?.IsDirty == true || _draftProfile?.Bindings.Count > 0) ? CopperTheme.Error : CopperTheme.Muted;
+        _validationText.IsVisible = _session == null || issues.Count > 0 && (_session.IsDirty || _draftProfile?.Bindings.Count > 0);
         UpdateEditorState();
     }
 
