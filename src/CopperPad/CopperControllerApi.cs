@@ -524,10 +524,10 @@ public sealed class CopperController
 	public CopperControllerSnapshot GetSnapshot()
 		=> _snapshot;
 
-	internal void UpdateInfo(CopperControllerInfo info)
+	internal void UpdateInfo(CopperControllerInfo info, bool refreshDisconnectedSnapshot = true)
 	{
 		Info = info;
-		if (!_snapshot.IsConnected)
+		if (refreshDisconnectedSnapshot && !_snapshot.IsConnected)
 		{
 			_snapshot = CreateDisconnectedSnapshot(info);
 		}
@@ -540,18 +540,29 @@ public sealed class CopperController
 
 		if (!previous.SupportedProfiles.SetEquals(snapshot.SupportedProfiles))
 		{
-			ProfileChanged?.Invoke(this, new CopperProfileChangedEventArgs(this, previous.SupportedProfiles, snapshot.SupportedProfiles));
+			var args = new CopperProfileChangedEventArgs(this, previous.SupportedProfiles, snapshot.SupportedProfiles);
+			foreach (EventHandler<CopperProfileChangedEventArgs> handler in ProfileChanged?.GetInvocationList() ?? [])
+			{
+				if (!ReferenceEquals(_snapshot, snapshot)) return;
+				handler(this, args);
+			}
 		}
 
 		foreach (var element in previous.Elements.Keys.Union(snapshot.Elements.Keys))
 		{
+			if (!ReferenceEquals(_snapshot, snapshot)) return;
 			previous.Elements.TryGetValue(element, out var oldValue);
 			var currentValue = snapshot.Elements.TryGetValue(element, out var value)
 				? value
 				: NeutralValue(oldValue.Kind);
 			if (!oldValue.Equals(currentValue))
 			{
-				ElementChanged?.Invoke(this, new CopperElementChangedEventArgs(this, element, oldValue, currentValue));
+				var args = new CopperElementChangedEventArgs(this, element, oldValue, currentValue);
+				foreach (EventHandler<CopperElementChangedEventArgs> handler in ElementChanged?.GetInvocationList() ?? [])
+				{
+					if (!ReferenceEquals(_snapshot, snapshot)) return;
+					handler(this, args);
+				}
 			}
 		}
 	}
@@ -585,6 +596,7 @@ public sealed class CopperControllerHost : IDisposable
 	private readonly IControllerProvider _provider;
 	private readonly ConcurrentDictionary<string, CopperController> _controllers = new(StringComparer.Ordinal);
 	private bool _disposed;
+	private long _generation;
 
 	/// <summary>
 	/// Creates a controller host for a platform provider.
@@ -604,13 +616,18 @@ public sealed class CopperControllerHost : IDisposable
 	public void Start()
 	{
 		ThrowIfDisposed();
+		var generation = Interlocked.Increment(ref _generation);
 		_provider.Start();
-		RefreshControllers(_provider.GetControllers());
+		if (Volatile.Read(ref _generation) == generation) RefreshControllers(_provider.GetControllers());
 	}
 
 	/// <summary>Stops the underlying provider.</summary>
 	public void Stop()
-		=> _provider.Stop();
+	{
+		var generation = Interlocked.Increment(ref _generation);
+		_provider.Stop();
+		if (Volatile.Read(ref _generation) == generation) RefreshControllers(Array.Empty<CopperControllerInfo>());
+	}
 
 	/// <summary>
 	/// Gets the controllers currently known to the host.
@@ -637,19 +654,28 @@ public sealed class CopperControllerHost : IDisposable
 		}
 
 		_disposed = true;
+		Interlocked.Increment(ref _generation);
 		_provider.ControllersChanged -= OnControllersChanged;
 		_provider.SnapshotChanged -= OnSnapshotChanged;
 		_provider.Dispose();
+		RefreshControllers(Array.Empty<CopperControllerInfo>());
 	}
 
 	private void OnControllersChanged(object? sender, CopperControllersChangedEventArgs args)
 	{
+		if (_disposed) return;
+		var generation = Volatile.Read(ref _generation);
 		RefreshControllers(args.Controllers);
-		ControllersChanged?.Invoke(this, args);
+		foreach (EventHandler<CopperControllersChangedEventArgs> handler in ControllersChanged?.GetInvocationList() ?? [])
+		{
+			if (Volatile.Read(ref _generation) != generation) return;
+			handler(this, args);
+		}
 	}
 
 	private void OnSnapshotChanged(object? sender, CopperControllerSnapshotChangedEventArgs args)
 	{
+		if (_disposed) return;
 		var info = new CopperControllerInfo(
 			args.Snapshot.ControllerId,
 			args.Snapshot.DisplayName,
@@ -662,23 +688,27 @@ public sealed class CopperControllerHost : IDisposable
 			args.Snapshot.MappingName,
 			args.Snapshot.Diagnostic);
 		var controller = _controllers.GetOrAdd(info.Id, _ => new CopperController(info));
+		controller.UpdateInfo(info, refreshDisconnectedSnapshot: false);
 		controller.UpdateSnapshot(args.Snapshot);
-		controller.UpdateInfo(info);
 	}
 
 	private void RefreshControllers(IReadOnlyList<CopperControllerInfo> infos)
 	{
+		var generation = Volatile.Read(ref _generation);
 		var present = infos.Select(info => info.Id).ToHashSet(StringComparer.Ordinal);
 		foreach (var stale in _controllers.Keys.Where(id => !present.Contains(id)).ToArray())
 		{
+			if (Volatile.Read(ref _generation) != generation) return;
 			if (_controllers.TryRemove(stale, out var controller))
 			{
+				controller.UpdateInfo(controller.Info with { IsConnected = false });
 				controller.UpdateSnapshot(CreateDisconnectedSnapshot(controller.Info));
 			}
 		}
 
 		foreach (var info in infos)
 		{
+			if (Volatile.Read(ref _generation) != generation) return;
 			_controllers.AddOrUpdate(
 				info.Id,
 				_ => new CopperController(info),

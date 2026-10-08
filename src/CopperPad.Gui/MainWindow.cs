@@ -136,18 +136,29 @@ internal sealed partial class MainWindow : Window, IDisposable
 		try
 		{
 			_profiles = await _profileStore.LoadAsync().ConfigureAwait(true);
-			_host.UpdateProfiles(_profiles);
 			ClearUiError("load");
 			SetStatus("");
 		}
 		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or System.Text.Json.JsonException)
 		{
-			_profiles = ControllerProfileSet.Empty;
 			SetStatus("Profile load failed: " + ex.Message);
-			ShowUiError("load", null, "Saved profiles could not be loaded", "Check the profile document in Diagnostics or import a valid document.", ex.Message + "\nProfile document: " + _profileStore.Path, "Open Diagnostics", () => { _tabs.SelectedIndex = 3; return Task.CompletedTask; });
+			ShowUiError("load", null, "Saved profiles could not be loaded", "Saving is blocked. Repair the document and retry loading, or import a replacement to preserve a backup.", ex.Message + "\nProfile document: " + _profileStore.Path, "Retry load", RetryLoadProfilesAsync);
 		}
 
+		if (!_profileStore.HasLoadFailure)
+		{
+			TryRunUiAction("Profile refresh failed", () => _host.UpdateProfiles(_profiles));
+		}
 		StartHost();
+	}
+
+	private async Task RetryLoadProfilesAsync()
+	{
+		_tabs.SelectedIndex = 3;
+		UpdateSelectedDeviceDetails();
+		await InitializeAsync();
+		UpdateEditorState();
+		SchedulePreview();
 	}
 
 	private void RefreshDevices()

@@ -385,6 +385,7 @@ internal sealed record SdlControllerMapping(
 
 	private static double ReadTrigger(SdlInputSource source, SdlInputSnapshot snapshot)
 	{
+		if (source.Kind == SdlInputSourceKind.Axis && snapshot.GetAxis(source.Index) == null) return 0;
 		var value = source.Kind switch
 		{
 			SdlInputSourceKind.Button => snapshot.GetButton(source.Index) ? 1 : 0,
@@ -574,10 +575,13 @@ internal enum SdlPolarity
 internal sealed class SdlHidInputDecoder
 {
 	private readonly ReportDescriptor? _descriptor;
+	private readonly DeviceItemInputParser[] _parsers = [];
+	private readonly bool _reportsUseId;
 	private readonly string? _diagnostic;
 
 	public SdlHidInputDecoder(HidDeviceDescriptor device)
 	{
+		_reportsUseId = device.ReportsUseId;
 		if (device.ReportDescriptor.Length == 0)
 		{
 			_diagnostic = "SDL mapping is using a raw fallback because the HID report descriptor is unavailable.";
@@ -586,48 +590,87 @@ internal sealed class SdlHidInputDecoder
 
 		try
 		{
-			_descriptor = new ReportDescriptor(device.ReportDescriptor);
+			var descriptor = new ReportDescriptor(device.ReportDescriptor);
+			var parsers = descriptor.DeviceItems.SelectMany(item => item.InputReports).ToArray()
+				.Select(CreateReportParser).ToArray();
+			if (parsers.Length == 0)
+			{
+				_diagnostic = "SDL mapping is using a raw fallback because the HID report descriptor has no input reports.";
+				return;
+			}
+			_descriptor = descriptor;
+			_parsers = parsers;
 		}
-		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException)
+		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or NotSupportedException or IndexOutOfRangeException)
 		{
 			_diagnostic = "SDL mapping is using a raw fallback because the HID report descriptor could not be parsed: " + ex.Message;
 		}
+	}
+
+	private static DeviceItemInputParser CreateReportParser(Report report)
+	{
+		// HidSharp 2.6.4 uses report-local indexes when updating parser values.
+		// Isolate each report so later IDs cannot overwrite another report's slots.
+		report.DeviceItem.Reports.Remove(report);
+		var item = new DeviceItem();
+		item.Reports.Add(report);
+		return item.CreateDeviceItemInputParser();
 	}
 
 	public SdlInputSnapshot Decode(RawControllerInput input)
 	{
 		if (_descriptor != null)
 		{
-			var parsed = TryDecodeParsed(input.Report);
-			if (parsed != null)
+			return DecodeParsed(input.Report, Math.Clamp(input.Length, 0, input.Report.Length));
+		}
+
+		var length = Math.Clamp(input.Length, 0, input.Report.Length);
+		var offset = _reportsUseId && length > 0 ? 1 : 0;
+		return DecodeRawFallback(input.Report.AsSpan(offset, length - offset).ToArray(), _diagnostic);
+	}
+
+	private SdlInputSnapshot DecodeParsed(byte[] report, int length)
+	{
+		// HidSharp includes the report ID byte, including ID 0 for unnumbered reports.
+		var matches = length == 0 ? [] : _parsers
+			.SelectMany(parser => parser.DeviceItem.InputReports
+				.Where(definition => definition.ReportID == report[0])
+				.Select(definition => (Parser: parser, Definition: definition)))
+			.ToArray();
+		string? diagnostic = null;
+		if (matches.Length == 0)
+		{
+			diagnostic = "SDL input report has an unknown or missing report ID; retaining the last decoded state.";
+		}
+		else if (matches.Any(match => length < match.Definition.Length))
+		{
+			diagnostic = "SDL input report is too short for its HID definition; retaining the last decoded state.";
+		}
+		else
+		{
+			foreach (var match in matches)
 			{
-				return parsed;
+				try
+				{
+					if (!match.Parser.TryParseReport(report, 0, match.Definition))
+						diagnostic = "SDL input report could not be decoded using its HID definition.";
+				}
+				catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IndexOutOfRangeException)
+				{
+					diagnostic = "SDL input report could not be decoded: " + ex.Message;
+				}
 			}
 		}
 
-		return DecodeRawFallback(input.Report, _diagnostic);
-	}
-
-	private SdlInputSnapshot? TryDecodeParsed(byte[] report)
-	{
-		foreach (var deviceItem in _descriptor!.DeviceItems)
+		var axes = new List<SdlAxisValue>();
+		var buttons = new Dictionary<int, bool>();
+		var hats = new List<int>();
+		foreach (var parser in _parsers)
 		{
-			var parser = deviceItem.CreateDeviceItemInputParser();
-			if (!TryParseReport(parser, report))
-			{
-				continue;
-			}
-
-			var axes = new List<SdlAxisValue>();
-			var buttons = new Dictionary<int, bool>();
-			var hats = new List<int>();
 			for (var index = 0; index < parser.ValueCount; index++)
 			{
 				var value = parser.GetValue(index);
-				if (!value.IsValid || value.IsNull)
-				{
-					continue;
-				}
+				var valid = value.IsValid && !value.IsNull;
 
 				foreach (var usage in value.Usages)
 				{
@@ -636,42 +679,27 @@ internal sealed class SdlHidInputDecoder
 						var buttonIndex = (int)(usage & 0xFFFF) - 1;
 						if (buttonIndex >= 0)
 						{
-							buttons[buttonIndex] = value.GetLogicalValue() != 0;
+							buttons[buttonIndex] = valid && value.GetLogicalValue() != 0;
 						}
 					}
 					else if (usage == (uint)Usage.GenericDesktopHatSwitch)
 					{
-						hats.Add(HidHatToSdlMask(value.GetLogicalValue()));
+						hats.Add(valid ? HidHatToSdlMask(value.GetLogicalValue() - value.DataItem.LogicalMinimum) : 0);
 					}
 					else if (IsAxisUsage(usage))
 					{
 						axes.Add(new SdlAxisValue(
-							value.GetLogicalValue(),
+							valid ? value.GetLogicalValue() : 0,
 							value.DataItem.LogicalMinimum,
-							value.DataItem.LogicalMaximum));
+							value.DataItem.LogicalMaximum,
+							valid));
 					}
 				}
 			}
-
-			if (axes.Count > 0 || buttons.Count > 0 || hats.Count > 0)
-			{
-				return new SdlInputSnapshot(axes, buttons, hats, null);
-			}
 		}
-
-		return null;
-	}
-
-	private static bool TryParseReport(DeviceItemInputParser parser, byte[] report)
-	{
-		try
-		{
-			return parser.TryParseReport(report, 0, null!);
-		}
-		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IndexOutOfRangeException)
-		{
-			return false;
-		}
+		if (axes.Count == 0 && buttons.Count == 0 && hats.Count == 0)
+			diagnostic ??= "The HID descriptor has no controller inputs for the SDL mapping.";
+		return new SdlInputSnapshot(axes, buttons, hats, diagnostic);
 	}
 
 	private static SdlInputSnapshot DecodeRawFallback(byte[] report, string? diagnostic)
@@ -756,13 +784,13 @@ internal sealed record SdlInputSnapshot(
 		=> Buttons.TryGetValue(index, out var pressed) && pressed;
 
 	public SdlAxisValue? GetAxis(int index)
-		=> index >= 0 && index < Axes.Count ? Axes[index] : null;
+		=> index >= 0 && index < Axes.Count && Axes[index].IsValid ? Axes[index] : null;
 
 	public int GetHat(int index)
 		=> index >= 0 && index < Hats.Count ? Hats[index] : 0;
 }
 
-internal readonly record struct SdlAxisValue(int Raw, int Minimum, int Maximum)
+internal readonly record struct SdlAxisValue(int Raw, int Minimum, int Maximum, bool IsValid = true)
 {
 	public int Center => Minimum + ((Maximum - Minimum) / 2);
 }

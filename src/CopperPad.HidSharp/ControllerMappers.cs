@@ -47,14 +47,14 @@ internal static class ControllerMapperFactory
 
 	internal static bool IsCandidate(HidDeviceDescriptor device, ControllerProfileSet profiles, bool requireGameControllerUsage = false)
 	{
-		if (requireGameControllerUsage && !device.IsGameControllerUsage)
-		{
-			return false;
-		}
-
 		if (profiles.FindMatch(ToInfo(device, true, device.Diagnostic)) != null)
 		{
 			return true;
+		}
+
+		if (requireGameControllerUsage && !device.IsGameControllerUsage)
+		{
+			return false;
 		}
 
 		return device.IsGameControllerUsage ||
@@ -159,8 +159,9 @@ internal sealed class ProfileControllerMapper(ControllerProfile profile) : ICont
 	private static void ApplyBinding(CopperControllerSnapshotBuilder builder, ControllerBinding binding, byte[] report, int length)
 	{
 		var source = binding.Source;
-		if (source.Offset < 0 || source.Offset >= length)
+		if (!SourceFits(source, report, length))
 		{
+			builder.Diagnostic = $"Profile binding for {binding.Target} has an incomplete report source at offset {source.Offset}.";
 			return;
 		}
 
@@ -191,7 +192,12 @@ internal sealed class ProfileControllerMapper(ControllerProfile profile) : ICont
 
 	internal static int ReadAxisSource(ControllerBindingSource source, byte[] report, int length)
 	{
-		if (source.Kind == ControllerBindingSourceKind.ReportInt16LittleEndian && source.Offset + 1 < length)
+		if (!SourceFits(source, report, length))
+		{
+			throw new ArgumentException("The binding source requires a complete report value.", nameof(report));
+		}
+
+		if (source.Kind == ControllerBindingSourceKind.ReportInt16LittleEndian)
 		{
 			return BitConverter.ToInt16(report, source.Offset);
 		}
@@ -199,8 +205,16 @@ internal sealed class ProfileControllerMapper(ControllerProfile profile) : ICont
 		return report[source.Offset];
 	}
 
+	private static bool SourceFits(ControllerBindingSource source, byte[] report, int length)
+	{
+		var available = Math.Clamp(length, 0, report.Length);
+		var width = source.Kind == ControllerBindingSourceKind.ReportInt16LittleEndian ? 2 : 1;
+		return source.Offset >= 0 && source.Offset < available && available - source.Offset >= width;
+	}
+
 	internal static bool ReadButtonSource(ControllerBindingSource source, byte[] report, int length)
 	{
+		if (!SourceFits(source, report, length)) return false;
 		var pressed = source.Kind switch
 		{
 			ControllerBindingSourceKind.ReportBit => source.Bit is >= 0 and < 8 && ReadBitSource(source, report),

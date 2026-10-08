@@ -263,8 +263,8 @@ public sealed partial class WorkspaceTests
         await session.Dispatch(async () =>
         {
             var path = Path.Combine(Path.GetTempPath(), "CopperPad-tests", Guid.NewGuid().ToString());
-            Directory.CreateDirectory(path);
             var host = new FakeGuiService(); using var window = Open(host, path);
+            Directory.CreateDirectory(path);
             host.Devices(Device()); Dispatcher.UIThread.RunJobs(); SeedBinding(window);
             var first = Field<EditorSession>(window, "_session");
             Field<TabControl>(window, "_tabs").SelectedIndex = 1;
@@ -327,7 +327,7 @@ public sealed partial class WorkspaceTests
             var output = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../artifacts/ui-review"));
             Directory.CreateDirectory(output);
             using (var remap = window.CaptureRenderedFrame())
-                remap!.Save(Path.Combine(output, $"remap-{width}x{height}-{scale:0.0}.png"));
+                remap!.Save(Path.Combine(output, $"remap-{width}x{height}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
             CaptureButton(window, host, 2, ArmCapture(window, host));
             host.Devices(); Dispatcher.UIThread.RunJobs();
             AssertVisibleInWindow(window, Field<ListBox>(window, "_deviceList"));
@@ -336,7 +336,7 @@ public sealed partial class WorkspaceTests
             AssertVisibleInWindow(window, Field<TextBlock>(window, "_guidedPromptText"));
             Assert.True(Field<Button>(window, "_saveProfileButton").IsEnabled);
             using (var offline = window.CaptureRenderedFrame())
-                offline!.Save(Path.Combine(output, $"offline-mapping-{width}x{height}-{scale:0.0}.png"));
+                offline!.Save(Path.Combine(output, $"offline-mapping-{width}x{height}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
         }, CancellationToken.None);
     }
 }

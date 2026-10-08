@@ -121,6 +121,7 @@ internal sealed class CopperControllerSnapshotBuilder
 
 	public CopperControllerSnapshot Build(HidDeviceDescriptor device, DateTimeOffset timestamp, ControllerMappingInfo mapping)
 	{
+		var mappingSource = ResolveMappingSource(mapping);
 		var elements = new Dictionary<ControllerElement, ControllerElementValue>
 		{
 			[ControllerElement.South] = ControllerElementValue.Button(A),
@@ -154,9 +155,9 @@ internal sealed class CopperControllerSnapshotBuilder
 			device.VendorId,
 			device.ProductId,
 			device.Transport,
-			elements,
-			MappedProfiles,
-			ResolveMappingSource(mapping),
+			mappingSource == ControllerMappingSource.None ? new Dictionary<ControllerElement, ControllerElementValue>() : elements,
+			ProfilesFor(mapping),
+			mappingSource,
 			mapping.Name,
 			Diagnostic);
 	}
@@ -171,7 +172,7 @@ internal sealed class CopperControllerSnapshotBuilder
 			device.ProductId,
 			device.Transport,
 			new Dictionary<ControllerElement, ControllerElementValue>(),
-			mapping == null ? RawOnlyProfiles : MappedProfiles,
+			ProfilesFor(mapping),
 			mapping == null ? ControllerMappingSource.None : ResolveMappingSource(mapping),
 			mapping?.Name,
 			diagnostic);
@@ -184,10 +185,13 @@ internal sealed class CopperControllerSnapshotBuilder
 			device.ProductId,
 			device.Transport,
 			connected,
-			mapping == null ? RawOnlyProfiles : MappedProfiles,
+			ProfilesFor(mapping),
 			mapping == null ? ControllerMappingSource.None : ResolveMappingSource(mapping),
 			mapping?.Name,
 			diagnostic);
+
+	private static ImmutableHashSet<ControllerProfileKind> ProfilesFor(ControllerMappingInfo? mapping)
+		=> mapping == null || ResolveMappingSource(mapping) == ControllerMappingSource.None ? RawOnlyProfiles : MappedProfiles;
 
 	private static ControllerMappingSource ResolveMappingSource(ControllerMappingInfo mapping)
 		=> mapping.Source switch

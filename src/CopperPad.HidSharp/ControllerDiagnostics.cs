@@ -109,12 +109,14 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 	private readonly IHidDeviceProvider _provider;
 	private readonly TimeSpan _readTimeout;
 	private readonly object _gate = new();
+	private readonly object _notificationGate = new();
+	private readonly object _streamGate = new();
 	private IReadOnlyList<HidDeviceDescriptor> _descriptors = [];
 	private IReadOnlyList<HidDeviceInfo> _devices = [];
 	private ControllerProfileSet _profiles;
 	private string? _diagnostic;
 	private string? _selectedDeviceId;
-	private CancellationTokenSource? _readerCancellation;
+	private ReaderSession? _reader;
 	private Task? _readerTask;
 	private bool _started;
 	private bool _disposed;
@@ -157,41 +159,47 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 	/// <summary>Starts HID enumeration and selected-device reading.</summary>
 	public void Start()
 	{
-		ThrowIfDisposed();
-		HidDevicesChangedEventArgs? changed = null;
-		lock (_gate)
+		lock (_notificationGate)
 		{
-			if (_started)
+			ThrowIfDisposed();
+			HidDevicesChangedEventArgs? changed = null;
+			lock (_gate)
 			{
-				return;
+				if (_started)
+				{
+					return;
+				}
+
+				_started = true;
+				changed = RescanLocked(restartReader: true);
 			}
 
-			_started = true;
-			changed = RescanLocked(restartReader: true);
+			DevicesChanged?.Invoke(this, changed);
 		}
-
-		DevicesChanged?.Invoke(this, changed);
 	}
 
 	/// <summary>Stops HID enumeration and selected-device reading.</summary>
 	public void Stop()
 	{
-		HidDevicesChangedEventArgs? changed = null;
-		lock (_gate)
+		lock (_notificationGate)
 		{
-			if (!_started)
+			HidDevicesChangedEventArgs? changed = null;
+			lock (_gate)
 			{
-				return;
+				if (!_started)
+				{
+					return;
+				}
+
+				_started = false;
+				StopReaderLocked();
+				_descriptors = [];
+				_devices = [];
+				changed = new HidDevicesChangedEventArgs(_devices, _diagnostic);
 			}
 
-			_started = false;
-			StopReaderLocked();
-			_descriptors = [];
-			_devices = [];
-			changed = new HidDevicesChangedEventArgs(_devices, _diagnostic);
+			DevicesChanged?.Invoke(this, changed);
 		}
-
-		DevicesChanged?.Invoke(this, changed);
 	}
 
 	/// <summary>
@@ -226,18 +234,21 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 	/// <param name="deviceId">The HID device identifier, or <see langword="null"/> to clear the selection.</param>
 	public void SelectDevice(string? deviceId)
 	{
-		ThrowIfDisposed();
-		lock (_gate)
+		lock (_notificationGate)
 		{
-			if (string.Equals(_selectedDeviceId, deviceId, StringComparison.Ordinal))
+			ThrowIfDisposed();
+			lock (_gate)
 			{
-				return;
-			}
+				if (string.Equals(_selectedDeviceId, deviceId, StringComparison.Ordinal))
+				{
+					return;
+				}
 
-			_selectedDeviceId = string.IsNullOrWhiteSpace(deviceId) ? null : deviceId;
-			if (_started)
-			{
-				StartSelectedReaderLocked();
+				_selectedDeviceId = string.IsNullOrWhiteSpace(deviceId) ? null : deviceId;
+				if (_started)
+				{
+					StartSelectedReaderLocked();
+				}
 			}
 		}
 	}
@@ -248,13 +259,16 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 	/// <param name="profiles">Profiles to use for subsequent selected-device reads.</param>
 	public void UpdateProfiles(ControllerProfileSet profiles)
 	{
-		ThrowIfDisposed();
-		lock (_gate)
+		lock (_notificationGate)
 		{
-			_profiles = profiles;
-			if (_started)
+			ThrowIfDisposed();
+			lock (_gate)
 			{
-				StartSelectedReaderLocked();
+				_profiles = profiles;
+				if (_started)
+				{
+					StartSelectedReaderLocked();
+				}
 			}
 		}
 	}
@@ -262,31 +276,34 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 	/// <summary>Stops readers and releases provider subscriptions.</summary>
 	public void Dispose()
 	{
-		if (_disposed)
+		lock (_notificationGate)
 		{
-			return;
-		}
+			if (_disposed) return;
 
-		_disposed = true;
-		_provider.Changed -= OnProviderChanged;
-		Stop();
-		_provider.Dispose();
+			_disposed = true;
+			_provider.Changed -= OnProviderChanged;
+			Stop();
+			_provider.Dispose();
+		}
 	}
 
 	private void OnProviderChanged(object? sender, EventArgs args)
 	{
-		HidDevicesChangedEventArgs? changed = null;
-		lock (_gate)
+		lock (_notificationGate)
 		{
-			if (_started)
+			HidDevicesChangedEventArgs? changed = null;
+			lock (_gate)
 			{
-				changed = RescanLocked(restartReader: true);
+				if (_started)
+				{
+					changed = RescanLocked(restartReader: true);
+				}
 			}
-		}
 
-		if (changed != null)
-		{
-			DevicesChanged?.Invoke(this, changed);
+			if (changed != null)
+			{
+				DevicesChanged?.Invoke(this, changed);
+			}
 		}
 	}
 
@@ -341,42 +358,46 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 		}
 
 		var mapper = ControllerMapperFactory.Create(device, _profiles);
-		var cancellation = new CancellationTokenSource();
-		_readerCancellation = cancellation;
-		_readerTask = Task.Run(() => ReadLoopAsync(device, mapper, cancellation.Token));
+		var session = new ReaderSession(device, mapper, _streamGate);
+		_reader = session;
+		_readerTask = Task.Run(() => ReadLoopAsync(session));
 	}
 
 	private void StopReaderLocked()
 	{
-		var cancellation = _readerCancellation;
+		var session = _reader;
 		var task = _readerTask;
-		_readerCancellation = null;
+		_reader = null;
 		_readerTask = null;
-		if (cancellation == null)
+		if (session == null)
 		{
 			return;
 		}
 
-		cancellation.Cancel();
+		session.Stop();
 		if (task == null)
 		{
-			cancellation.Dispose();
+			session.Cancellation.Dispose();
 			return;
 		}
 
 		_ = task.ContinueWith(
-			_ => cancellation.Dispose(),
+			_ => session.Cancellation.Dispose(),
 			CancellationToken.None,
 			TaskContinuationOptions.ExecuteSynchronously,
 			TaskScheduler.Default);
 	}
 
-	private async Task ReadLoopAsync(HidDeviceDescriptor device, IControllerMapper mapper, CancellationToken cancellationToken)
+	private async Task ReadLoopAsync(ReaderSession session)
 	{
+		var device = session.Device;
+		var mapper = session.Mapper;
+		var cancellationToken = session.Cancellation.Token;
 		var info = ToInfo(device);
 		try
 		{
-			using var stream = _provider.Open(device, _readTimeout);
+			var stream = session.Open(_provider, _readTimeout);
+			if (stream == null) return;
 			var buffer = new byte[Math.Max(1, stream.MaxInputReportLength)];
 			while (!cancellationToken.IsCancellationRequested)
 			{
@@ -389,9 +410,18 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 				var snapshot = new byte[read];
 				Array.Copy(buffer, snapshot, read);
 				var timestamp = DateTimeOffset.UtcNow;
-				RawReportReceived?.Invoke(this, new ControllerRawReportReceivedEventArgs(info, snapshot, read, timestamp));
-				var input = new RawControllerInput(device, snapshot, read, timestamp);
-				SnapshotChanged?.Invoke(this, new CopperControllerSnapshotChangedEventArgs(mapper.Map(input)));
+				lock (_notificationGate)
+				{
+					var args = new ControllerRawReportReceivedEventArgs(info, snapshot, read, timestamp);
+					foreach (EventHandler<ControllerRawReportReceivedEventArgs> handler in RawReportReceived?.GetInvocationList() ?? [])
+					{
+						if (!IsCurrentReader(session)) return;
+						handler(this, args);
+					}
+					if (!IsCurrentReader(session)) return;
+					var input = new RawControllerInput(device, snapshot, read, timestamp);
+					PublishReaderSnapshot(session, mapper.Map(input));
+				}
 			}
 		}
 		catch (OperationCanceledException)
@@ -400,10 +430,61 @@ public sealed class ControllerDiagnosticsHost : IDisposable
 		catch (Exception ex) when (IsRecoverableHidException(ex))
 		{
 			var diagnostic = "HID read failed: " + ex.Message;
-			SnapshotChanged?.Invoke(
-				this,
-				new CopperControllerSnapshotChangedEventArgs(
-					CopperControllerSnapshotBuilder.Disconnected(device, DateTimeOffset.UtcNow, mapper.MappingInfo, diagnostic)));
+			PublishReaderSnapshot(session, CopperControllerSnapshotBuilder.Disconnected(device, DateTimeOffset.UtcNow, mapper.MappingInfo, diagnostic));
+		}
+		finally { session.CloseStream(); }
+	}
+
+	private bool IsCurrentReader(ReaderSession session)
+	{
+		lock (_gate) return _started && ReferenceEquals(_reader, session) && !session.Cancellation.IsCancellationRequested;
+	}
+
+	private void PublishReaderSnapshot(ReaderSession session, CopperControllerSnapshot snapshot)
+	{
+		lock (_notificationGate)
+		{
+			var args = new CopperControllerSnapshotChangedEventArgs(snapshot);
+			foreach (EventHandler<CopperControllerSnapshotChangedEventArgs> handler in SnapshotChanged?.GetInvocationList() ?? [])
+			{
+				if (!IsCurrentReader(session)) return;
+				handler(this, args);
+			}
+		}
+	}
+
+	private sealed class ReaderSession(HidDeviceDescriptor device, IControllerMapper mapper, object streamGate)
+	{
+		private IHidInputStream? _stream;
+		public HidDeviceDescriptor Device { get; } = device;
+		public IControllerMapper Mapper { get; } = mapper;
+		public CancellationTokenSource Cancellation { get; } = new();
+
+		public IHidInputStream? Open(IHidDeviceProvider provider, TimeSpan timeout)
+		{
+			// Serialize opening and closing handles, including an open finishing during Stop.
+			lock (streamGate)
+			{
+				if (Cancellation.IsCancellationRequested) return null;
+				_stream = provider.Open(Device, timeout);
+				return _stream;
+			}
+		}
+
+		public void Stop()
+		{
+			Cancellation.Cancel();
+			CloseStream();
+		}
+
+		public void CloseStream()
+		{
+			lock (streamGate)
+			{
+				var stream = _stream;
+				_stream = null;
+				stream?.Dispose();
+			}
 		}
 	}
 

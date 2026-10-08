@@ -15,10 +15,12 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 	private readonly IHidDeviceProvider _provider;
 	private readonly HidSharpControllerProviderOptions _options;
 	private readonly object _gate = new();
+	private readonly object _notificationGate = new();
 	private readonly ConcurrentDictionary<string, CopperControllerSnapshot> _snapshots = new(StringComparer.Ordinal);
 	private readonly Dictionary<string, ControllerSession> _sessions = new(StringComparer.Ordinal);
 	private bool _started;
 	private bool _disposed;
+	private long _generation;
 
 	/// <summary>
 	/// Creates a HidSharp controller provider using the local device list.
@@ -54,6 +56,7 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 			}
 
 			_started = true;
+			_generation++;
 			shouldScan = true;
 		}
 
@@ -67,6 +70,7 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 	public void Stop()
 	{
 		ControllerSession[] sessions;
+		long generation;
 		lock (_gate)
 		{
 			if (!_started)
@@ -75,6 +79,7 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 			}
 
 			_started = false;
+			generation = ++_generation;
 			sessions = _sessions.Values.ToArray();
 			_sessions.Clear();
 			_snapshots.Clear();
@@ -85,7 +90,7 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 			session.Dispose();
 		}
 
-		ControllersChanged?.Invoke(this, new CopperControllersChangedEventArgs(Array.Empty<CopperControllerInfo>()));
+		PublishControllersChanged(generation, started: false);
 	}
 
 	/// <inheritdoc />
@@ -134,16 +139,21 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 
 	private void Rescan()
 	{
+		long generation;
+		lock (_gate)
+		{
+			if (!_started) return;
+			generation = _generation;
+		}
 		var devices = _provider.GetDevices()
 			.Where(device => ControllerMapperFactory.IsCandidate(device, _options.Profiles, _options.RequireGameControllerUsage))
 			.GroupBy(device => device.Id, StringComparer.Ordinal)
 			.Select(group => group.First())
 			.ToArray();
 		ControllerSession[] staleSessions;
-		CopperControllerInfo[] controllers;
 		lock (_gate)
 		{
-			if (!_started)
+			if (!_started || generation != _generation)
 			{
 				return;
 			}
@@ -171,7 +181,6 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 				session.Start();
 			}
 
-			controllers = BuildControllersLocked();
 		}
 
 		foreach (var session in staleSessions)
@@ -179,34 +188,53 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 			session.Dispose();
 		}
 
-		ControllersChanged?.Invoke(this, new CopperControllersChangedEventArgs(controllers));
+		PublishControllersChanged(generation, started: true);
 	}
 
-	private void PublishSnapshot(CopperControllerSnapshot snapshot)
+	private void PublishControllersChanged(long generation, bool started)
 	{
-		bool connectionChanged;
-		CopperControllerInfo[]? controllers = null;
-		lock (_gate)
+		lock (_notificationGate)
 		{
-			if (!_started || !_sessions.ContainsKey(snapshot.ControllerId))
+			CopperControllerInfo[] controllers;
+			lock (_gate)
 			{
-				return;
-			}
-
-			connectionChanged = !_snapshots.TryGetValue(snapshot.ControllerId, out var previous) || previous.IsConnected != snapshot.IsConnected;
-			_snapshots[snapshot.ControllerId] = snapshot;
-			if (connectionChanged)
-			{
+				if (_generation != generation || _started != started) return;
 				controllers = BuildControllersLocked();
 			}
-		}
-
-		SnapshotChanged?.Invoke(this, new CopperControllerSnapshotChangedEventArgs(snapshot));
-		if (controllers != null)
-		{
-			ControllersChanged?.Invoke(this, new CopperControllersChangedEventArgs(controllers));
+			var args = new CopperControllersChangedEventArgs(controllers);
+			foreach (EventHandler<CopperControllersChangedEventArgs> handler in ControllersChanged?.GetInvocationList() ?? [])
+			{
+				lock (_gate) { if (_generation != generation || _started != started) return; }
+				handler(this, args);
+			}
 		}
 	}
+
+	private void PublishSnapshot(ControllerSession session, CopperControllerSnapshot snapshot)
+	{
+		lock (_notificationGate)
+		{
+			bool connectionChanged;
+			long generation;
+			lock (_gate)
+			{
+				if (!IsCurrentSessionLocked(session, snapshot.ControllerId)) return;
+				generation = _generation;
+				connectionChanged = !_snapshots.TryGetValue(snapshot.ControllerId, out var previous) || previous.IsConnected != snapshot.IsConnected;
+				_snapshots[snapshot.ControllerId] = snapshot;
+			}
+			var args = new CopperControllerSnapshotChangedEventArgs(snapshot);
+			foreach (EventHandler<CopperControllerSnapshotChangedEventArgs> handler in SnapshotChanged?.GetInvocationList() ?? [])
+			{
+				lock (_gate) { if (_generation != generation || !IsCurrentSessionLocked(session, snapshot.ControllerId)) return; }
+				handler(this, args);
+			}
+			if (connectionChanged) PublishControllersChanged(generation, started: true);
+		}
+	}
+
+	private bool IsCurrentSessionLocked(ControllerSession session, string id)
+		=> _started && _sessions.TryGetValue(id, out var current) && ReferenceEquals(current, session);
 
 	private CopperControllerInfo[] BuildControllersLocked()
 		=> _sessions.Values
@@ -226,7 +254,7 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 		private readonly IControllerMapper _mapper;
 		private readonly IHidDeviceProvider _provider;
 		private readonly TimeSpan _readTimeout;
-		private readonly Action<CopperControllerSnapshot> _publish;
+		private readonly Action<ControllerSession, CopperControllerSnapshot> _publish;
 		private readonly CancellationTokenSource _cancellation = new();
 		private readonly object _gate = new();
 		private Task? _task;
@@ -238,7 +266,7 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 			IControllerMapper mapper,
 			IHidDeviceProvider provider,
 			TimeSpan readTimeout,
-			Action<CopperControllerSnapshot> publish)
+			Action<ControllerSession, CopperControllerSnapshot> publish)
 		{
 			_device = device;
 			_mapper = mapper;
@@ -330,7 +358,7 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 						Info = CopperControllerSnapshotBuilder.ToInfo(_device, true, _mapper.MappingInfo, mapped.Diagnostic);
 						disconnectedPublished = false;
 						backoff = TimeSpan.FromMilliseconds(250);
-						_publish(mapped);
+						_publish(this, mapped);
 					}
 				}
 				catch (OperationCanceledException) when (_cancellation.IsCancellationRequested)
@@ -347,7 +375,7 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 					{
 						var diagnostic = "HID read failed: " + ex.Message;
 						Info = CopperControllerSnapshotBuilder.ToInfo(_device, false, _mapper.MappingInfo, diagnostic);
-						_publish(CopperControllerSnapshotBuilder.Disconnected(_device, DateTimeOffset.UtcNow, _mapper.MappingInfo, diagnostic));
+						_publish(this, CopperControllerSnapshotBuilder.Disconnected(_device, DateTimeOffset.UtcNow, _mapper.MappingInfo, diagnostic));
 						disconnectedPublished = true;
 					}
 

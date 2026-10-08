@@ -73,10 +73,10 @@ public sealed partial class WorkspaceTests
                 if (page == 1) AssertVisibleInWindow(window, Field<Button>(window, "_startGuidedMappingButton"));
                 if (page == 2) AssertVisibleInWindow(window, Field<Button>(window, "_mapCalibrationAxis"));
                 using var frame = window.CaptureRenderedFrame();
-                frame!.Save(Path.Combine(output, $"stress-{page}-sidebar-{sidebarWidth}-{scale:0.0}.png"));
+                frame!.Save(Path.Combine(output, $"stress-{page}-sidebar-{sidebarWidth}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
                 PageScroll(tabs).ScrollToEnd(); window.UpdateLayout();
                 using var lower = window.CaptureRenderedFrame();
-                lower!.Save(Path.Combine(output, $"stress-{page}-lower-sidebar-{sidebarWidth}-{scale:0.0}.png"));
+                lower!.Save(Path.Combine(output, $"stress-{page}-lower-sidebar-{sidebarWidth}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
             }
         }, CancellationToken.None);
     }

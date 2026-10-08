@@ -49,7 +49,7 @@ internal sealed partial class MainWindow
         _loadingEditor = false;
         _saveProfileButton.IsVisible = true;
         _saveProfileButton.Content = "Save changes";
-        _saveProfileButton.IsEnabled = _session is { IsDirty: true } && _session.Issues.Count == 0 && !_guidedMappingActive && !_calibrationActive && !_rangeReview;
+        _saveProfileButton.IsEnabled = !_profileStore.HasLoadFailure && _session is { IsDirty: true } && _session.Issues.Count == 0 && !_guidedMappingActive && !_calibrationActive && !_rangeReview;
         _revertButton.IsEnabled = _session?.IsDirty == true;
         _undoButton.IsEnabled = _session?.CanUndo == true;
         _redoButton.IsEnabled = _session?.CanRedo == true;
@@ -65,7 +65,7 @@ internal sealed partial class MainWindow
         _saveState.Text = (_session?.IsDirty == true ? "Unsaved changes" : _session == null ? "No controller selected" : "Saved") + (other > 0 ? $" · {other} other unsaved controller(s)" : "");
         _saveState.Foreground = _session?.IsDirty == true || other > 0 ? CopperTheme.Warning : CopperTheme.Muted;
         _saveAllButton.IsVisible = other > 0;
-        _saveAllButton.IsEnabled = !_guidedMappingActive && !_calibrationActive && !_rangeReview && _sessions.Values.Where(x => x.IsDirty).All(x => x.Issues.Count == 0);
+        _saveAllButton.IsEnabled = !_profileStore.HasLoadFailure && !_guidedMappingActive && !_calibrationActive && !_rangeReview && _sessions.Values.Where(x => x.IsDirty).All(x => x.Issues.Count == 0);
         _startGuidedMappingButton.IsEnabled = _selectedDevice != null && !_guidedMappingActive;
         UpdateErrorBanner();
     }
@@ -120,6 +120,7 @@ internal sealed partial class MainWindow
     {
         if (_saving) return false;
         if (!session.IsDirty) return true;
+        if (_profileStore.HasLoadFailure) { SetStatus("Could not save changes: Retry loading the saved document or import a replacement. Your draft is retained."); return false; }
         if (session.Issues.Count != 0) { SetStatus($"Cannot save {session.Draft.Name}: {session.Issues[0].Message}"); UpdateErrorBanner(); return false; }
         var profile = session.Draft with { UpdatedAt = DateTimeOffset.UtcNow };
         var candidate = session.WithSavedDraft(_profiles, profile);
@@ -229,13 +230,19 @@ internal sealed partial class MainWindow
 
     private async Task ImportDocumentAsync(ControllerProfileSet importedProfiles)
     {
+        if (_saving) return;
         var replacementSaved = false;
         try
         {
             if (importedProfiles.Profiles.Any(p => ProfileEditor.ValidateProfile(p, int.MaxValue).Count > 0)) throw new InvalidOperationException("The imported document contains invalid profiles.");
-            if (await AskAsync("Replace saved profiles?", $"This replaces {_profiles.Profiles.Count} saved profiles with {importedProfiles.Profiles.Count} imported profiles.", "Replace", "Cancel") != "Replace") return;
+            var message = _profileStore.HasLoadFailure
+                ? "The saved document could not be loaded. Importing a replacement will keep a backup of the original document."
+                : $"This replaces {_profiles.Profiles.Count} saved profiles with {importedProfiles.Profiles.Count} imported profiles.";
+            if (await AskAsync("Replace saved profiles?", message, "Replace", "Cancel") != "Replace") return;
             if (!await ResolveDirtySessionsAsync(discardImmediately: false)) return;
-            await _profileStore.SaveAsync(importedProfiles);
+            _saving = true;
+            IsEnabled = false;
+            await _profileStore.SaveReplacementAsync(importedProfiles);
             replacementSaved = true;
             _profiles = importedProfiles;
             _sessions.Clear();
@@ -243,7 +250,7 @@ internal sealed partial class MainWindow
             var selected = _selectedDevice;
             _selectedDevice = null;
             SelectDevice(selected);
-            SetStatus("Imported profiles.");
+            SetStatus(_profileStore.LastBackupPath is { } backup ? $"Imported profiles. Original document backed up to {backup}." : "Imported profiles.");
             ClearUiError("import");
             ClearUiError("load");
             foreach (var key in _errors.Keys.Where(k => k.DeviceId != null).ToArray()) _errors.Remove(key);
@@ -255,6 +262,7 @@ internal sealed partial class MainWindow
             else ShowImportFailure(ex);
             throw;
         }
+        finally { _saving = false; IsEnabled = true; }
     }
 
     private void RestartGuidedTarget(int index)

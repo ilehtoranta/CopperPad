@@ -15,5 +15,6 @@ public sealed record HidSharpControllerProviderOptions
 	/// <summary>Gets the timeout used when reading HID input reports.</summary>
 	public TimeSpan ReadTimeout { get; init; } = TimeSpan.FromMilliseconds(250);
 	/// <summary>Gets whether discovery should ignore devices without HID gamepad, joystick, or multiaxis-controller usage.</summary>
+	/// <remarks>An explicitly matching user profile can include a device without a game-controller usage.</remarks>
 	public bool RequireGameControllerUsage { get; init; }
 }

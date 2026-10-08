@@ -2,6 +2,10 @@
 
 ## Automated checks
 
+The [audit fix validation record](docs/AuditFixValidation.md) lists passing local
+regressions and the Windows/Linux CI, native iOS, and physical-controller checks
+still required for those changes.
+
 - Confirm the `CI` workflow passes on Windows and Linux.
 - Confirm the `iOS` workflow builds `net10.0-ios`, packs the iOS-enabled package, and uploads its artifact.
 - Build and test locally when practical:

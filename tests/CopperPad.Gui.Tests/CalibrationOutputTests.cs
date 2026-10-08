@@ -83,7 +83,7 @@ public sealed partial class WorkspaceTests
             var output = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../artifacts/ui-review"));
             Directory.CreateDirectory(output);
             window.UpdateLayout();
-            using (var frame = window.CaptureRenderedFrame()) frame!.Save(Path.Combine(output, $"calibration-rest-{width}x{height}-{scale:0.0}.png"));
+            using (var frame = window.CaptureRenderedFrame()) frame!.Save(Path.Combine(output, $"calibration-rest-{width}x{height}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
             Invoke(window, "AdvanceCalibration"); Invoke(window, "AdvanceCalibration");
             Assert.Equal(expected, GraphOutput(window), 12);
             Assert.Contains("Capture not applied", Field<TextBlock>(window, "_calibrationOutputLabel").Text);
@@ -98,7 +98,7 @@ public sealed partial class WorkspaceTests
             Assert.Same(original, editor.Draft);
             AssertVisibleInWindow(window, Field<TextBlock>(window, "_calibrationOutputLabel"));
             AssertVisibleInWindow(window, Field<TextBlock>(window, "_calibrationValues"));
-            using (var frame = window.CaptureRenderedFrame()) frame!.Save(Path.Combine(output, $"calibration-review-{width}x{height}-{scale:0.0}.png"));
+            using (var frame = window.CaptureRenderedFrame()) frame!.Save(Path.Combine(output, $"calibration-review-{width}x{height}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
             Invoke(window, "CancelCalibration");
             Assert.Equal(expected, GraphOutput(window), 12);
             Assert.Equal("Draft output", Field<TextBlock>(window, "_calibrationOutputLabel").Text);

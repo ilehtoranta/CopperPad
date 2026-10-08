@@ -150,6 +150,59 @@ public sealed class CopperControllerApiTests
 		Assert.Contains(ControllerProfileKind.StandardGamepad, snapshot.SupportedProfiles);
 	}
 
+	[Theory]
+	[InlineData(false)]
+	[InlineData(true)]
+	public void DisconnectCallbackDuringDiscoveryRefreshCannotResurrectControllers(bool dispose)
+	{
+		using var provider = new FakeControllerProvider();
+		using var host = new CopperControllerHost(provider);
+		provider.SetControllers(Info());
+		host.Start();
+		var controller = Assert.Single(host.GetControllers());
+		provider.Publish(Snapshot(true, new Dictionary<ControllerElement, ControllerElementValue>
+		{
+			[ControllerElement.South] = ControllerElementValue.Button(true)
+		}));
+		controller.ElementChanged += (_, args) =>
+		{
+			if (args.CurrentValue.IsPressed) return;
+			if (dispose) host.Dispose(); else host.Stop();
+		};
+		var staleLists = 0;
+		host.ControllersChanged += (_, args) => { if (args.Controllers.Any(info => info.Id == "replacement")) staleLists++; };
+		provider.SetControllers(Info() with { Id = "replacement" });
+		provider.RaiseControllersChanged();
+		Assert.Empty(host.GetControllers());
+		Assert.Empty(provider.GetControllers());
+		Assert.False(controller.GetSnapshot().IsConnected);
+		Assert.False(controller.Info.IsConnected);
+		Assert.Equal(0, staleLists);
+	}
+
+	[Fact]
+	public void DisposeDuringProfileCallbackSuppressesRemainingNotifications()
+	{
+		using var provider = new FakeControllerProvider();
+		using var host = new CopperControllerHost(provider);
+		provider.SetControllers(Info());
+		host.Start();
+		var controller = Assert.Single(host.GetControllers());
+		var staleProfiles = 0;
+		var staleElements = 0;
+		controller.ProfileChanged += (_, _) => host.Dispose();
+		controller.ProfileChanged += (_, _) => staleProfiles++;
+		controller.ElementChanged += (_, args) => { if (args.CurrentValue.IsPressed) staleElements++; };
+		provider.Publish(Snapshot(true, new Dictionary<ControllerElement, ControllerElementValue>
+		{
+			[ControllerElement.South] = ControllerElementValue.Button(true)
+		}, [ControllerProfileKind.ExtendedGamepad]));
+		Assert.Empty(host.GetControllers());
+		Assert.False(controller.GetSnapshot().IsConnected);
+		Assert.Equal(0, staleProfiles);
+		Assert.Equal(0, staleElements);
+	}
+
 	private static CopperControllerInfo Info()
 		=> new("pad", "Pad", 1, 2, ControllerTransport.Usb, true, [ControllerProfileKind.StandardGamepad], ControllerMappingSource.UserProfile, "test", null);
 
@@ -172,6 +225,8 @@ public sealed class CopperControllerApiTests
 
 		public void Stop()
 		{
+			_controllers = [];
+			RaiseControllersChanged();
 		}
 
 		public IReadOnlyList<CopperControllerInfo> GetControllers()
@@ -194,6 +249,7 @@ public sealed class CopperControllerApiTests
 
 		public void Dispose()
 		{
+			Stop();
 		}
 	}
 }

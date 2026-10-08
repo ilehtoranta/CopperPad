@@ -2,6 +2,57 @@ using CopperPad;
 
 public sealed class HidSharpControllerProviderTests
 {
+	[Theory]
+	[InlineData(false, false)]
+	[InlineData(false, true)]
+	[InlineData(true, false)]
+	[InlineData(true, true)]
+	public async Task StopOrDisposeDuringProviderCallbacksInvalidatesLaterSubscribers(bool snapshotCallback, bool dispose)
+	{
+		var device = ControllerMapperTests.Device(0x1111, 0x2222, "Generic Gamepad", isGameControllerUsage: true);
+		var stream = new FakeHidInputStream(device.MaxInputReportLength);
+		var provider = new FakeHidDeviceProvider();
+		provider.SetDevices(device);
+		provider.SetStream(device.Id, stream);
+		using var controllerProvider = new HidSharpControllerProvider(provider, new());
+		var stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+		void Stop()
+		{
+			if (dispose) controllerProvider.Dispose(); else controllerProvider.Stop();
+			stopped.TrySetResult();
+		}
+		if (snapshotCallback) controllerProvider.SnapshotChanged += (_, _) => Stop();
+		else controllerProvider.ControllersChanged += (_, args) => { if (args.Controllers.Length > 0) Stop(); };
+		using var host = new CopperControllerHost(controllerProvider);
+		host.Start();
+		if (snapshotCallback) stream.Enqueue([128, 128, 128, 128, 0, 0, 1, 8]);
+		await stopped.Task.WaitAsync(TimeSpan.FromSeconds(3));
+		Assert.Empty(controllerProvider.GetControllers());
+		Assert.Empty(host.GetControllers());
+		Assert.False(controllerProvider.TryGetSnapshot(device.Id, out _));
+	}
+
+	[Fact]
+	public async Task UnmappedDiscoveryAndReadSnapshotsAdvertiseOnlyRawInput()
+	{
+		var device = ControllerMapperTests.Device(0x9999, 0x8888, "Unknown HID controller");
+		var stream = new FakeHidInputStream(device.MaxInputReportLength);
+		var provider = new FakeHidDeviceProvider();
+		provider.SetDevices(device);
+		provider.SetStream(device.Id, stream);
+		using var controllerProvider = new HidSharpControllerProvider(provider, new());
+		var connected = new TaskCompletionSource<CopperControllerSnapshot>(TaskCreationOptions.RunContinuationsAsynchronously);
+		controllerProvider.SnapshotChanged += (_, args) => connected.TrySetResult(args.Snapshot);
+		controllerProvider.Start();
+		Assert.Equal(ControllerProfileKind.RawInput, Assert.Single(Assert.Single(controllerProvider.GetControllers()).SupportedProfiles));
+		Assert.True(controllerProvider.TryGetSnapshot(device.Id, out var initial));
+		Assert.Equal(ControllerProfileKind.RawInput, Assert.Single(initial.SupportedProfiles));
+		stream.Enqueue([255]);
+		var snapshot = await connected.Task.WaitAsync(TimeSpan.FromSeconds(3));
+		Assert.Equal(ControllerProfileKind.RawInput, Assert.Single(snapshot.SupportedProfiles));
+		Assert.Empty(snapshot.Elements);
+	}
+
 	[Fact]
 	public async Task Provider_StartsStreamsAndPublishesLatestSnapshot()
 	{

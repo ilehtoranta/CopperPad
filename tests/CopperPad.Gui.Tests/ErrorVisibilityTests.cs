@@ -14,8 +14,8 @@ public sealed partial class WorkspaceTests
         await session.Dispatch(async () =>
         {
             var path = Path.Combine(Path.GetTempPath(), "CopperPad-tests", Guid.NewGuid().ToString());
-            Directory.CreateDirectory(path);
             var host = new FakeGuiService(); using var window = Open(host, path);
+            Directory.CreateDirectory(path);
             host.Devices(Device(), Device("other") with { ProductId = 2 }); Dispatcher.UIThread.RunJobs();
             SeedBinding(window); await CallAsync(window, "SaveDraftProfileAsync");
             var draft = Field<EditorSession>(window, "_session");
@@ -71,8 +71,8 @@ public sealed partial class WorkspaceTests
         await session.Dispatch(async () =>
         {
             var path = Path.Combine(Path.GetTempPath(), "CopperPad-tests", Guid.NewGuid().ToString());
-            Directory.CreateDirectory(path);
             var host = new FakeGuiService(); using var window = Open(host, path);
+            Directory.CreateDirectory(path);
             host.Devices(Device()); Dispatcher.UIThread.RunJobs(); SeedBinding(window);
             await CallAsync(window, "SaveDraftProfileAsync");
             Field<TextBox>(window, "_profileName").Text = "";
@@ -246,7 +246,7 @@ public sealed partial class WorkspaceTests
             AssertVisibleInWindow(window, Field<Button>(window, "_errorAction"));
             var output = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../artifacts/ui-review"));
             Directory.CreateDirectory(output);
-            using (var frame = window.CaptureRenderedFrame()) frame!.Save(Path.Combine(output, $"error-range-{width}x{height}-{scale:0.0}.png"));
+            using (var frame = window.CaptureRenderedFrame()) frame!.Save(Path.Combine(output, $"error-range-{width}x{height}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
             Invoke(window, "CancelCalibration");
             // Idle capture errors persist even when the scrolling page is hidden.
             Call(window, "SetCalibrationStatus", new string('x', 4000), true);
@@ -259,7 +259,7 @@ public sealed partial class WorkspaceTests
                 AssertVisibleInWindow(window, Field<Button>(window, "_saveProfileButton"));
                 Assert.True(Field<Border>(window, "_errorBanner").Bounds.Height < 110);
                 using var frame = window.CaptureRenderedFrame();
-                frame!.Save(Path.Combine(output, $"error-{page}-{width}x{height}-{scale:0.0}.png"));
+                frame!.Save(Path.Combine(output, $"error-{page}-{width}x{height}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
             }
             string? details = null;
             window.DialogHandler = (_, message, _) => { details = message; return Task.FromResult<string?>("Close"); };

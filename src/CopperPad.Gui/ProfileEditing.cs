@@ -15,19 +15,47 @@ internal static class CopperPadProfilePaths
 internal sealed class FileControllerProfileStore(string path) : IControllerProfileStore
 {
 	public string Path { get; } = path;
+	public bool HasLoadFailure { get; private set; }
+	public string? LastBackupPath { get; private set; }
 
 	public async ValueTask<ControllerProfileSet> LoadAsync(CancellationToken cancellationToken = default)
 	{
-		if (!File.Exists(Path))
+		HasLoadFailure = true;
+		try
 		{
+			await using var stream = File.OpenRead(Path);
+			var profiles = await JsonControllerProfileSerializer.LoadAsync(stream, cancellationToken).ConfigureAwait(false);
+			HasLoadFailure = false;
+			return profiles;
+		}
+		catch (Exception ex) when (ex is FileNotFoundException or DirectoryNotFoundException)
+		{
+			HasLoadFailure = false;
 			return ControllerProfileSet.Empty;
 		}
-
-		await using var stream = File.OpenRead(Path);
-		return await JsonControllerProfileSerializer.LoadAsync(stream, cancellationToken).ConfigureAwait(false);
+		catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Text.Json.JsonException)
+		{
+			HasLoadFailure = true;
+			throw;
+		}
 	}
 
-	public async ValueTask SaveAsync(ControllerProfileSet profiles, CancellationToken cancellationToken = default)
+	public ValueTask SaveAsync(ControllerProfileSet profiles, CancellationToken cancellationToken = default)
+	{
+		if (HasLoadFailure)
+		{
+			throw new InvalidOperationException("The saved profile document could not be loaded. Retry loading it or import a replacement before saving changes.");
+		}
+		return SaveCoreAsync(profiles, preserveOriginal: false, cancellationToken);
+	}
+
+	public ValueTask SaveReplacementAsync(ControllerProfileSet profiles, CancellationToken cancellationToken = default)
+	{
+		LastBackupPath = null;
+		return SaveCoreAsync(profiles, preserveOriginal: HasLoadFailure, cancellationToken);
+	}
+
+	private async ValueTask SaveCoreAsync(ControllerProfileSet profiles, bool preserveOriginal, CancellationToken cancellationToken)
 	{
 		var directory = System.IO.Path.GetDirectoryName(Path);
 		if (!string.IsNullOrWhiteSpace(directory))
@@ -52,7 +80,22 @@ internal sealed class FileControllerProfileStore(string path) : IControllerProfi
 			}
 
 			cancellationToken.ThrowIfCancellationRequested();
+			if (preserveOriginal)
+			{
+				var backupPath = Path + "." + Guid.NewGuid().ToString("N") + ".bak";
+				try
+				{
+					File.Copy(Path, backupPath, overwrite: false);
+					LastBackupPath = backupPath;
+				}
+				catch (FileNotFoundException)
+				{
+					// A document removed during recovery no longer needs a backup.
+				}
+			}
+			cancellationToken.ThrowIfCancellationRequested();
 			File.Move(temporaryPath, Path, overwrite: true);
+			HasLoadFailure = false;
 		}
 		finally
 		{
@@ -154,9 +197,9 @@ internal static class ReportAnalyzer
 			return 0;
 		}
 
-		if (source.Kind == ControllerBindingSourceKind.ReportInt16LittleEndian && source.Offset + 1 < report.Length)
+		if (source.Kind == ControllerBindingSourceKind.ReportInt16LittleEndian)
 		{
-			return BitConverter.ToInt16(report, source.Offset);
+			return report.Length - source.Offset >= 2 ? BitConverter.ToInt16(report, source.Offset) : 0;
 		}
 
 		if (source.Kind == ControllerBindingSourceKind.ReportBit && source.Bit is >= 0 and < 8)

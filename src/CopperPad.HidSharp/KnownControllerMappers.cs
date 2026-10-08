@@ -35,18 +35,16 @@ internal static class KnownControllerMapper
 		=> IsPlayStation(device) || IsSwitch(device) || IsXbox(device);
 
 	private static bool IsPlayStation(HidDeviceDescriptor device)
-		=> device.VendorId == 0x054C ||
-			device.ProductName.Contains("dualshock", StringComparison.OrdinalIgnoreCase) ||
-			device.ProductName.Contains("dualsense", StringComparison.OrdinalIgnoreCase);
+		=> device.VendorId == 0x054C && device.ProductId is 0x05C4 or 0x09CC && HasControllerLayout(device, 10);
 
 	private static bool IsSwitch(HidDeviceDescriptor device)
-		=> device.VendorId == 0x057E ||
-			device.ProductName.Contains("switch pro", StringComparison.OrdinalIgnoreCase) ||
-			device.ProductName.Contains("pro controller", StringComparison.OrdinalIgnoreCase);
+		=> device.VendorId == 0x057E && device.ProductId == 0x2009 && HasControllerLayout(device, 12);
 
 	private static bool IsXbox(HidDeviceDescriptor device)
-		=> device.VendorId == 0x045E ||
-			device.ProductName.Contains("xbox", StringComparison.OrdinalIgnoreCase);
+		=> device.VendorId == 0x045E && device.ProductId is 0x02D1 or 0x02DD or 0x02EA or 0x02FD or 0x0B00 or 0x0B05 or 0x0B12 or 0x0B13 && HasControllerLayout(device, 14);
+
+	private static bool HasControllerLayout(HidDeviceDescriptor device, int minimumLength)
+		=> device.MaxInputReportLength >= minimumLength && (device.ReportDescriptor.Length == 0 || device.IsGameControllerUsage);
 }
 
 internal sealed class PlayStationControllerMapper : IControllerMapper
@@ -141,11 +139,11 @@ internal sealed class SwitchProControllerMapper : IControllerMapper
 		builder.LeftTrigger = (leftButtons & 0x80) != 0 ? 1 : 0;
 
 		builder.LeftX = InputNormalization.NormalizeAxis(Read12(report[offset + 3], report[offset + 4]), 0, 4095);
-		builder.LeftY = InputNormalization.NormalizeAxis(Read12(report[offset + 4] >> 4, report[offset + 5]), 0, 4095, invert: true);
+		builder.LeftY = InputNormalization.NormalizeAxis((report[offset + 4] >> 4) | (report[offset + 5] << 4), 0, 4095, invert: true);
 		if (input.Length - offset >= 9)
 		{
 			builder.RightX = InputNormalization.NormalizeAxis(Read12(report[offset + 6], report[offset + 7]), 0, 4095);
-			builder.RightY = InputNormalization.NormalizeAxis(Read12(report[offset + 7] >> 4, report[offset + 8]), 0, 4095, invert: true);
+			builder.RightY = InputNormalization.NormalizeAxis((report[offset + 7] >> 4) | (report[offset + 8] << 4), 0, 4095, invert: true);
 		}
 
 		return builder.Build(input.Device, input.Timestamp, MappingInfo);

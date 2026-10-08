@@ -87,8 +87,8 @@ public sealed partial class WorkspaceTests
             var host = new FakeGuiService();
             // An existing directory cannot be replaced by the profile document.
             var blockedPath = Path.Combine(Path.GetTempPath(), "CopperPad-tests", Guid.NewGuid().ToString());
-            Directory.CreateDirectory(blockedPath);
             using var window = Open(host, blockedPath);
+            Directory.CreateDirectory(blockedPath);
             host.Devices(Device()); Dispatcher.UIThread.RunJobs();
             SeedBinding(window);
         Field<TextBox>(window, "_profileName").Text = "Keep this draft"; Dispatcher.UIThread.RunJobs();
@@ -290,7 +290,7 @@ public sealed partial class WorkspaceTests
             tabs.SelectedIndex = page; window.UpdateLayout(); Dispatcher.UIThread.RunJobs();
             using var frame = window.CaptureRenderedFrame();
             Assert.NotNull(frame);
-            frame.Save(Path.Combine(output, $"page-{page}-{width}x{height}-{scale:0.0}.png"));
+            frame.Save(Path.Combine(output, $"page-{page}-{width}x{height}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
             Assert.True(Field<Button>(window, "_saveProfileButton").Bounds.Width > 0);
             AssertVisibleInWindow(window, Field<Button>(window, "_saveProfileButton"));
             if (page == 1) { AssertVisibleInWindow(window, Field<TextBox>(window, "_profileName")); Assert.False(Field<TextBlock>(window, "_validationText").IsVisible); AssertVisibleInWindow(window, Field<Button>(window, "_startGuidedMappingButton")); }
@@ -299,11 +299,11 @@ public sealed partial class WorkspaceTests
             var scroll = PageScroll(tabs);
             window.UpdateLayout(); scroll.ScrollToEnd(); window.UpdateLayout();
             using var lower = window.CaptureRenderedFrame();
-            lower!.Save(Path.Combine(output, $"page-{page}-lower-{width}x{height}-{scale:0.0}.png"));
+            lower!.Save(Path.Combine(output, $"page-{page}-lower-{width}x{height}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
         }
         host.Devices(); Dispatcher.UIThread.RunJobs();
         using (var disconnected = window.CaptureRenderedFrame())
-            disconnected!.Save(Path.Combine(output, $"disconnected-{width}x{height}-{scale:0.0}.png"));
+            disconnected!.Save(Path.Combine(output, $"disconnected-{width}x{height}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
         Assert.True(Field<Button>(window, "_revertButton").IsEnabled);
         Click(Field<Button>(window, "_revertButton"));
         Assert.Empty(Field<ListBox>(window, "_deviceList").Items);
@@ -316,7 +316,7 @@ public sealed partial class WorkspaceTests
             Assert.Contains("Connect", Field<TextBlock>(window, "_deviceTitle").Text);
             AssertVisibleInWindow(window, Field<Button>(window, "_saveProfileButton"));
             using var empty = window.CaptureRenderedFrame();
-            empty!.Save(Path.Combine(output, $"empty-{page}-{width}x{height}-{scale:0.0}.png"));
+            empty!.Save(Path.Combine(output, $"empty-{page}-{width}x{height}-{scale:0.0}.png"), Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
         }
 
         }, CancellationToken.None);
