@@ -25,7 +25,7 @@ public sealed class HidSharpControllerProvider : IControllerProvider
 	/// </summary>
 	/// <param name="options">Provider options, or <see langword="null"/> for defaults.</param>
 	public HidSharpControllerProvider(HidSharpControllerProviderOptions? options = null)
-		: this(new HidSharpDeviceProvider(), options ?? new HidSharpControllerProviderOptions())
+		: this(new HidSharpDeviceProvider(options?.RequireGameControllerUsage ?? false), options ?? new HidSharpControllerProviderOptions())
 	{
 	}
 

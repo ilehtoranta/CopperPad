@@ -12,10 +12,12 @@ internal sealed class HidSharpDeviceProvider : IHidDeviceProvider
 {
 	private readonly DeviceList _deviceList;
 	private readonly EventHandler<DeviceListChangedEventArgs> _changedHandler;
+	private readonly bool _requireGameControllerUsage;
 	private bool _disposed;
 
-	public HidSharpDeviceProvider()
+	public HidSharpDeviceProvider(bool requireGameControllerUsage = false)
 	{
+		_requireGameControllerUsage = requireGameControllerUsage;
 		_deviceList = DeviceList.Local;
 		_changedHandler = (_, _) => Changed?.Invoke(this, EventArgs.Empty);
 		_deviceList.Changed += _changedHandler;
@@ -24,10 +26,19 @@ internal sealed class HidSharpDeviceProvider : IHidDeviceProvider
 	public event EventHandler? Changed;
 
 	public IReadOnlyList<HidDeviceDescriptor> GetDevices()
+		=> DescribeDevices(_deviceList.GetHidDevices(), _requireGameControllerUsage,
+			device => WindowsHidUsage.TryRead(device.DevicePath));
+
+	internal static IReadOnlyList<HidDeviceDescriptor> DescribeDevices(IEnumerable<HidDevice> source,
+		bool requireGameControllerUsage, Func<HidDevice, WindowsHidUsage?> readUsage)
 	{
 		var devices = new List<HidDeviceDescriptor>();
-		foreach (var device in _deviceList.GetHidDevices())
+		foreach (var device in source)
 		{
+			// Windows already knows each top-level collection's usage. Filter before
+			// reconstructing descriptors: unrelated HID collections can contain layouts
+			// HidSharp cannot reconstruct. Unknown usage retains the existing fallback.
+			if (requireGameControllerUsage && readUsage(device) is { IsGameController: false }) continue;
 			devices.Add(CreateDescriptor(device));
 		}
 

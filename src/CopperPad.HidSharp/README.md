@@ -14,6 +14,8 @@ The bundled SDL_GameControllerDB snapshot is third-party mapping data under the 
 
 In version 2, diagnostics report descriptors and raw input reports are immutable `ReadOnlyMemory<byte>` values. Reader sessions automatically retry transient HID open/read failures until stopped or the device disappears.
 
+When `RequireGameControllerUsage` is enabled, Windows discovery reads the native top-level HID usage before reconstructing a report descriptor. Mouse, keyboard, consumer-control and other non-controller collections are skipped before their descriptors are probed. Joystick, gamepad and multiaxis-controller collections retain descriptor parsing and all existing mappings. If native usage cannot be queried, discovery falls back to descriptor parsing. Unfiltered diagnostics continue to inspect all collections.
+
 ## Quick example
 
 ```csharp
